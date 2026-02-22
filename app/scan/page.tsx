@@ -46,6 +46,7 @@ export default function ScanPage() {
     const [cameraError, setCameraError] = useState(false);
     const [livePoints, setLivePoints] = useState<{ x: number, y: number }[] | null>(null);
     const detectionInterval = useRef<any>(null);
+    const isStartingCamera = useRef(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -53,6 +54,9 @@ export default function ScanPage() {
 
     // Start camera
     const startCamera = useCallback(async () => {
+        if (cameraStream || isStartingCamera.current) return;
+        isStartingCamera.current = true;
+
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
@@ -67,8 +71,10 @@ export default function ScanPage() {
             console.error("Camera error:", err);
             setCameraError(true);
             announce('Camera failed to start. Please use upload button.', 'polite');
+        } finally {
+            isStartingCamera.current = false;
         }
-    }, [announce]);
+    }, [announce, cameraStream]);
 
     const stopCamera = useCallback(() => {
         if (cameraStream) {
@@ -87,7 +93,6 @@ export default function ScanPage() {
         } else {
             stopCamera();
         }
-        return () => stopCamera();
     }, [scanStage, startCamera, stopCamera]);
 
     // Live OpenCV detection loop
@@ -393,32 +398,34 @@ export default function ScanPage() {
                 onLoad={() => setCvReady(true)}
             />
 
-            {/* Header */}
-            <header className="px-4 py-4 flex items-center justify-between z-20 sticky top-0 bg-[var(--color-neutral-900)]/80 backdrop-blur-md">
-                <Link href="/" className="p-2 rounded-full hover:bg-[var(--color-neutral-800)] transition-colors">
+            {/* Overlay Header */}
+            <header className="fixed top-0 left-0 right-0 px-4 py-4 flex items-center justify-between z-30 pointer-events-none">
+                <Link href="/" className="p-2 rounded-full bg-black/20 backdrop-blur-md hover:bg-black/40 transition-colors pointer-events-auto">
                     <ArrowLeft size={24} />
-                    <span className="sr-only">Go back</span>
                 </Link>
                 {scanStage !== 'idle' && (
                     <button
                         onClick={handleDiscard}
-                        className="p-2 rounded-full text-[var(--color-neutral-400)] hover:text-white hover:bg-[var(--color-neutral-800)] transition-colors"
-                        aria-label="Discard scan"
+                        className="p-2 rounded-full bg-black/20 backdrop-blur-md text-[var(--color-neutral-400)] hover:text-white hover:bg-black/40 transition-colors pointer-events-auto"
                     >
                         <X size={24} />
                     </button>
                 )}
             </header>
 
-            {/* Main Stage */}
-            <main className="flex-1 px-4 sm:px-6 flex flex-col items-center justify-center -mt-16 pb-24 z-10 w-full relative">
+            {/* Main Stage - Full Screen on IDLE */}
+            <main className={cn(
+                "flex-1 flex flex-col items-center justify-center z-10 w-full relative",
+                scanStage === 'idle' ? "px-0 pb-0" : "px-4 sm:px-6 pb-24"
+            )}>
 
                 {/* IDLE = Camera View */}
                 <div
                     className={cn(
-                        "relative w-full max-w-2xl h-[65vh] min-h-[400px] rounded-3xl overflow-hidden shadow-2xl transition-all duration-500 ease-in-out bg-black flex flex-col items-center justify-center",
-                        scanStage === 'idle' ? "opacity-100" : "opacity-0 absolute pointer-events-none"
+                        "relative w-full shadow-2xl transition-all duration-500 ease-in-out bg-black flex flex-col items-center justify-center",
+                        scanStage === 'idle' ? "h-[100dvh] w-full rounded-0" : "max-w-2xl min-h-[500px] aspect-[9/16] sm:aspect-[3/4] rounded-3xl"
                     )}
+                    style={scanStage === 'idle' ? { opacity: 1 } : { opacity: 0, position: 'absolute', pointerEvents: 'none' }}
                 >
                     <video
                         ref={videoRef}
@@ -480,7 +487,7 @@ export default function ScanPage() {
                     <div
                         ref={containerRef}
                         className={cn(
-                            "relative w-full max-w-2xl h-[65vh] min-h-[400px] rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 ease-in-out touch-none",
+                            "relative w-full max-w-2xl aspect-[9/16] sm:aspect-[3/4] rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 ease-in-out touch-none",
                             scanStage === 'transforming' ? "scale-95 bg-black" : "bg-[var(--color-neutral-800)] scale-100"
                         )}
                         onPointerMove={pointerMoveHandler}
@@ -572,44 +579,49 @@ export default function ScanPage() {
                                     ))}
                                 </svg>
 
-                                {/* Magnifier View */}
                                 {activeElement !== null && (
                                     <div
                                         className={cn(
-                                            "absolute w-28 h-28 rounded-full shadow-[0_4px_16px_rgba(0,0,0,0.5)] overflow-hidden pointer-events-none z-50 bg-black transition-opacity duration-200 border-4 border-white",
+                                            "absolute w-36 h-36 rounded-2xl shadow-[0_12px_48px_rgba(0,0,0,0.7)] overflow-hidden pointer-events-none z-50 bg-black transition-opacity duration-200 border-2 border-white/50",
                                             activeElement !== null ? "opacity-100" : "opacity-0"
                                         )}
                                         style={{
-                                            left: `${Math.min(Math.max(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2, 18), 82)}%`,
-                                            top: `${Math.max((typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) - 18, 10)}%`,
+                                            left: `${Math.min(Math.max(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2, 25), 75)}%`,
+                                            top: `${Math.max((typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) - 30, 20)}%`,
                                             transform: 'translate(-50%, -100%)'
                                         }}
                                     >
-                                        <img
-                                            src={image as string}
-                                            className="absolute max-w-none object-fill"
-                                            style={{
-                                                width: '400%',
-                                                height: '400%',
-                                                left: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2) * 4 - 50}%`,
-                                                top: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) * 4 - 50}%`,
-                                            }}
-                                        />
-                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                            <div className="w-[2px] h-4 bg-[var(--color-primary-500)]" />
-                                            <div className="absolute w-4 h-[2px] bg-[var(--color-primary-500)]" />
+                                        <div className="w-full h-full relative">
+                                            <img
+                                                src={image as string}
+                                                className="absolute max-w-none w-[800%] h-[800%] object-fill"
+                                                style={{
+                                                    left: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2) * 8 - 50}%`,
+                                                    top: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) * 8 - 50}%`,
+                                                }}
+                                                alt=""
+                                            />
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                                <div className="w-[1px] h-full bg-white/30" />
+                                                <div className="absolute w-full h-[1px] bg-white/30" />
+                                                <div className="w-2 h-2 rounded-full border border-white/50 bg-[var(--color-primary-500)]" />
+                                            </div>
                                         </div>
                                     </div>
                                 )}
 
-                                <div className="absolute bottom-6 left-0 w-full flex justify-between px-4 sm:px-8 pointer-events-auto">
-                                    <Button onClick={handleDiscard} variant="ghost" className="bg-black/60 text-white hover:bg-black/80 backdrop-blur-md border border-white/20">
-                                        Retake
-                                    </Button>
-                                    <Button onClick={confirmCrop} variant="primary" className="shadow-[0_4px_20px_var(--color-primary-500)]">
-                                        {t('btnConfirmCrop')}
-                                    </Button>
-                                </div>
+                            </div>
+                        )}
+
+                        {/* External Control Bar to prevent overlap */}
+                        {scanStage === 'cropping' && (
+                            <div className="mt-8 w-full max-w-2xl flex justify-between gap-4 pointer-events-auto px-4 sm:px-0">
+                                <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-white/5 text-white hover:bg-white/10 backdrop-blur-md border border-white/10 py-5 text-base">
+                                    {t('btnDiscard')}
+                                </Button>
+                                <Button onClick={confirmCrop} variant="primary" className="flex-1 py-5 shadow-lg shadow-primary-500/20 text-base">
+                                    {t('btnConfirmCrop')}
+                                </Button>
                             </div>
                         )}
 
@@ -635,7 +647,7 @@ export default function ScanPage() {
                     </div>
                 )}
 
-                <input type="file" accept="image/*" capture="environment" className="sr-only" ref={fileInputRef} onChange={handleFileSelect} />
+                <input type="file" accept="image/*" className="sr-only" ref={fileInputRef} onChange={handleFileSelect} />
                 <canvas ref={canvasRef} className="hidden" />
             </main>
 
