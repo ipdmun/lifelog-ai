@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ScanProvider } from "@/contexts/ScanContext";
 
 export const metadata: Metadata = {
   title: "CalToPaper - Digital Calendar to Printable Diary",
@@ -39,9 +40,11 @@ export default function RootLayout({
 
         <main id="main-content">
           <AuthProvider>
-            <LanguageProvider>
-              {children}
-            </LanguageProvider>
+            <ScanProvider>
+              <LanguageProvider>
+                {children}
+              </LanguageProvider>
+            </ScanProvider>
           </AuthProvider>
         </main>
       </body>

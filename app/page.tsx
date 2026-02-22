@@ -7,9 +7,11 @@ import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useScanConfig } from "@/contexts/ScanContext";
 
 export default function Home() {
   const { t } = useLanguage();
+  const { triggerNativeCamera } = useScanConfig();
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
@@ -35,11 +37,9 @@ export default function Home() {
 
           {/* Hero CTAs */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in-up delay-300">
-            <Link href="/scan">
-              <Button variant="primary" size="lg" leftIcon={<Camera size={20} />}>
-                {t('btnScan')}
-              </Button>
-            </Link>
+            <Button variant="primary" size="lg" leftIcon={<Camera size={20} />} onClick={triggerNativeCamera}>
+              {t('btnScan')}
+            </Button>
             <Link href="/upload">
               <Button variant="outline" size="lg" leftIcon={<Upload size={20} />}>
                 {t('btnUpload')}

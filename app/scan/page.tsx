@@ -11,6 +11,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import Script from "next/script";
 import Tesseract from "tesseract.js";
 import { useAuth } from "@/contexts/AuthContext";
+import { useScanConfig } from "@/contexts/ScanContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, updateDoc, arrayUnion } from "firebase/firestore";
 import { LogItem } from "@/components/dashboard/LogTimeline";
@@ -40,193 +41,20 @@ export default function ScanPage() {
     const [transformedImage, setTransformedImage] = useState<string | null>(null);
     const [cvReady, setCvReady] = useState(false);
 
-    // Live Camera state
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-    const [cameraError, setCameraError] = useState(false);
-    const [livePoints, setLivePoints] = useState<{ x: number, y: number }[] | null>(null);
-    const detectionInterval = useRef<any>(null);
-    const isStartingCamera = useRef(false);
-
+    const { capturedImage, triggerNativeCamera } = useScanConfig();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const announce = useAnnounce();
 
-    // Start camera
-    const startCamera = useCallback(async () => {
-        if (cameraStream || isStartingCamera.current) return;
-        isStartingCamera.current = true;
-
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    facingMode: { ideal: 'environment' },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    advanced: [{ focusMode: 'continuous' }] as any
-                }
-            });
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-            }
-            setCameraStream(stream);
-            setCameraError(false);
-            announce('Camera started', 'polite');
-        } catch (err) {
-            console.error("Camera error:", err);
-            setCameraError(true);
-            announce('Camera failed to start. Please use upload button.', 'polite');
-        } finally {
-            isStartingCamera.current = false;
-        }
-    }, [announce, cameraStream]);
-
-    const stopCamera = useCallback(() => {
-        if (cameraStream) {
-            cameraStream.getTracks().forEach(t => t.stop());
-            setCameraStream(null);
-        }
-        if (detectionInterval.current) {
-            clearInterval(detectionInterval.current);
-            detectionInterval.current = null;
-        }
-    }, [cameraStream]);
-
     useEffect(() => {
-        if (scanStage === 'idle') {
-            startCamera();
-        } else {
-            stopCamera();
-        }
-    }, [scanStage, startCamera, stopCamera]);
-
-    const handleFocus = useCallback(async (e: React.MouseEvent<HTMLVideoElement> | React.TouchEvent<HTMLVideoElement>) => {
-        if (!cameraStream) return;
-        const video = videoRef.current;
-        if (!video) return;
-
-        const rect = video.getBoundingClientRect();
-        let clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-        let clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-
-        const x = (clientX - rect.left) / rect.width;
-        const y = (clientY - rect.top) / rect.height;
-
-        const track = cameraStream.getVideoTracks()[0];
-
-        if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
-            navigator.vibrate(50);
-        }
-
-        if (track && typeof track.getCapabilities === 'function') {
-            const capabilities: any = track.getCapabilities();
-            if (capabilities.focusMode) {
-                try {
-                    await track.applyConstraints({
-                        advanced: [{
-                            pointsOfInterest: [{ x, y }],
-                            focusMode: 'single-shot'
-                        }]
-                    } as any);
-                } catch (err) {
-                    console.log("Focus not supported:", err);
-                }
-            }
-        }
-    }, [cameraStream]);
-
-    // Live OpenCV detection loop
-    useEffect(() => {
-        if (scanStage !== 'idle' || !cvReady || !cameraStream || cameraError) return;
-
-        detectionInterval.current = setInterval(() => {
-            const video = videoRef.current;
-            if (!video || video.videoWidth === 0) return;
-            const cv = (window as any).cv;
-            try {
-                const canvas = canvasRef.current!;
-                const ctx = canvas.getContext('2d')!;
-                // scale down heavily for live speed
-                const scale = 0.25;
-                canvas.width = video.videoWidth * scale;
-                canvas.height = video.videoHeight * scale;
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                const src = cv.imread(canvas);
-                const dst = new cv.Mat();
-                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
-                cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-                cv.Canny(dst, dst, 75, 200, 3, false);
-
-                const contours = new cv.MatVector();
-                const hierarchy = new cv.Mat();
-                cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-                let maxArea = 0;
-                let maxContourIndex = -1;
-                let approx = new cv.Mat();
-
-                let found = false;
-                for (let i = 0; i < contours.size(); ++i) {
-                    const contour = contours.get(i);
-                    const area = cv.contourArea(contour, false);
-                    if (area > 500 && area > maxArea) { // 500 is ok given 0.25 scale
-                        const peri = cv.arcLength(contour, true);
-                        const tmpApprox = new cv.Mat();
-                        cv.approxPolyDP(contour, tmpApprox, 0.02 * peri, true);
-                        if (tmpApprox.rows === 4) {
-                            maxArea = area;
-                            maxContourIndex = i;
-                            tmpApprox.copyTo(approx);
-                            found = true;
-                        }
-                        tmpApprox.delete();
-                    }
-                    contour.delete();
-                }
-
-                if (found) {
-                    const pts = [];
-                    for (let i = 0; i < 4; i++) {
-                        pts.push({ x: (approx.data32S[i * 2] / canvas.width) * 100, y: (approx.data32S[i * 2 + 1] / canvas.height) * 100 });
-                    }
-                    pts.sort((a, b) => a.y - b.y);
-                    const top = pts.slice(0, 2).sort((a, b) => a.x - b.x);
-                    const bottom = pts.slice(2, 4).sort((a, b) => a.x - b.x);
-                    setLivePoints([top[0], top[1], bottom[1], bottom[0]]);
-                } else {
-                    setLivePoints(null);
-                }
-                src.delete(); dst.delete(); contours.delete(); hierarchy.delete(); approx.delete();
-            } catch (e) { }
-        }, 200);
-
-        return () => clearInterval(detectionInterval.current);
-    }, [cvReady, scanStage, cameraStream, cameraError]);
-
-    const capturePhoto = () => {
-        if (!videoRef.current) return;
-        const video = videoRef.current;
-        const canvas = canvasRef.current!;
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(video, 0, 0);
-
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-        setImage(dataUrl);
-        stopCamera();
-
-        if (livePoints) {
-            setCropPoints(livePoints);
-        } else {
+        if (scanStage === 'idle' && capturedImage) {
+            setImage(capturedImage);
             setCropPoints([
                 { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
             ]);
+            setScanStage('cropping');
         }
-
-        setScanStage('cropping');
-    };
+    }, [scanStage, capturedImage]);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -238,7 +66,6 @@ export default function ScanPage() {
                     { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
                 ]);
                 setScanStage('cropping');
-                stopCamera();
             };
             reader.readAsDataURL(file);
         }
@@ -357,7 +184,6 @@ export default function ScanPage() {
         setTransformedImage(null);
         setResult(null);
         setScanStage('idle');
-        setLivePoints(null);
         announce('Image discarded', 'polite');
     };
 
@@ -467,59 +293,20 @@ export default function ScanPage() {
                     )}
                     style={scanStage === 'idle' ? { opacity: 1 } : { opacity: 0, position: 'absolute', pointerEvents: 'none' }}
                 >
-                    <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover cursor-pointer"
-                        onClick={handleFocus}
-                        onTouchEnd={handleFocus}
-                    />
-
-                    {/* Live Document Overlay */}
-                    {livePoints && !cameraError && (
-                        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                            <polygon
-                                points={livePoints.map(p => `${p.x}%,${p.y}%`).join(' ')}
-                                fill="rgba(245, 158, 11, 0.2)"
-                                stroke="#f59e0b"
-                                strokeWidth="4"
-                            />
-                        </svg>
-                    )}
-
-                    {cameraError && (
+                    {scanStage === 'idle' && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-neutral-400)] text-center p-6 bg-[var(--color-neutral-800)]">
-                            <Camera size={48} className="mb-4 opacity-50" />
-                            <p className="text-lg text-white mb-2">Live Camera Blocked</p>
-                            <p className="text-sm opacity-70 mb-6">Browsers require HTTPS to access camera. Use the gallery upload instead.</p>
-                            <Button onClick={() => fileInputRef.current?.click()} variant="primary">
-                                Upload Photo
+                            <Camera size={64} className="mb-6 opacity-30 animate-pulse text-[var(--color-primary-500)]" />
+                            <h2 className="text-2xl font-bold text-white mb-3 flex items-center gap-2">
+                                <Sparkles size={24} className="text-amber-400" />
+                                {t('heroTitle')}
+                            </h2>
+                            <p className="text-[var(--color-neutral-300)] mb-10 max-w-sm leading-relaxed text-lg lg:text-xl">
+                                {t('demoDesc')}
+                            </p>
+                            <Button onClick={triggerNativeCamera} variant="primary" size="lg" className="px-10 py-6 text-xl rounded-full shadow-[0_8px_32px_rgba(245,158,11,0.4)]">
+                                <Camera size={24} className="mr-3" />
+                                {t('btnScan')}
                             </Button>
-                        </div>
-                    )}
-
-                    {/* Camera Controls */}
-                    {!cameraError && (
-                        <div className="absolute bottom-6 left-0 right-0 flex justify-center items-center gap-8">
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
-                                className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm pointer-events-auto active:scale-95 transition-transform"
-                                aria-label="Upload from gallery"
-                            >
-                                <ImageIcon size={20} className="text-white" />
-                            </button>
-
-                            <button
-                                onClick={capturePhoto}
-                                className="w-20 h-20 bg-white rounded-full border-[6px] border-[var(--color-neutral-400)] flex items-center justify-center shadow-lg active:scale-95 transition-transform pointer-events-auto"
-                                aria-label="Take photo"
-                            >
-                                <div className="w-[85%] h-[85%] bg-white rounded-full border-2 border-[var(--color-neutral-900)]"></div>
-                            </button>
-
-                            <div className="w-12 h-12" /> {/* Spacer */}
                         </div>
                     )}
                 </div>
