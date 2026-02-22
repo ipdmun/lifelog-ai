@@ -20,9 +20,10 @@ I am sending you an image of a document (handwritten notes, business docs, calen
 Your task is to extract its key information, especially the PRIMARY DATE of the record.
 
 CRITICAL INSTRUCTION FOR LANGUAGE:
-- Do NOT translate the text written in the document.
-- The "summary" and "tags" should be in ${locale === 'ko' ? 'Korean' : 'English'}.
-- All field values MUST strictly be in the original language exactly as written.
+- Do NOT translate any text found in the document. 
+- "events": "title" values MUST be the EXACT original text as written, word-for-word.
+- "summary" and "tags" should use ${locale === 'ko' ? 'Korean' : 'English'}.
+- Keep all proper nouns and technical terms in their original script (e.g., maintain Korean hangeul).
 
 CRITICAL INSTRUCTION FOR DATE DETECTION:
 - Today's date is: ${new Date().toISOString().split('T')[0]}
@@ -45,7 +46,7 @@ Follow this JSON structure:
 `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-1.5-flash',
             contents: [
                 prompt,
                 {

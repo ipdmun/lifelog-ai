@@ -176,6 +176,10 @@ export default function ScanPage() {
     const startCamera = useCallback(async () => {
         if (scanStage !== 'idle') return;
         try {
+            // First cleanup
+            stopCamera();
+
+            // Initial stream to get permissions and device list
             let stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
 
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -184,57 +188,73 @@ export default function ScanPage() {
 
             let bestDeviceId = activeCameraId || null;
 
-            if (!bestDeviceId) {
+            if (!bestDeviceId && videoDevices.length > 0) {
                 let highestScore = -1;
+                let defaultBackId = null;
+
                 for (const device of videoDevices) {
                     const label = device.label.toLowerCase();
                     let score = 0;
+
+                    // Basic check for back camera
                     if (label.includes('back') || label.includes('environment') || label.includes('후면')) {
-                        score += 10;
-                        if (label.includes('main') || label.includes('standard') || label.includes('기본')) score += 5;
-                        if (label.includes('wide') || label.includes('초광각') || label.includes('0.5x')) score -= 15;
-                        if (label.includes('ultra')) score -= 15;
-                        if (label.includes('tele') || label.includes('망원') || label.includes('macro')) score -= 10;
-                        if (score > highestScore) {
-                            highestScore = score;
-                            bestDeviceId = device.deviceId;
-                        }
+                        score += 50;
+                        if (!defaultBackId) defaultBackId = device.deviceId;
+                    }
+
+                    // Look for indicators of the primary 1x camera
+                    if (label.includes('main') || label.includes('primary') || label.includes('standard') || label.includes('기본')) score += 50;
+                    if (label.includes('camera 0') || label.includes('0번')) score += 30;
+                    if (label.includes('1x')) score += 40;
+
+                    // Strongly penalize wide-angle, ultra-wide, macro, and telephoto lenses
+                    if (label.includes('wide') || label.includes('broad')) score -= 10; // "Wide" is ambiguous, sometimes means main
+                    if (label.includes('ultra') || label.includes('super') || label.includes('초광각') || label.includes('0.5x') || label.includes('0.6x')) score -= 100;
+                    if (label.includes('macro') || label.includes('접사')) score -= 80;
+                    if (label.includes('tele') || label.includes('망원') || label.includes('zoom') || label.includes('2x') || label.includes('3x')) score -= 60;
+                    if (label.includes('depth') || label.includes('심도')) score -= 90;
+
+                    if (score > highestScore) {
+                        highestScore = score;
+                        bestDeviceId = device.deviceId;
                     }
                 }
-                if (!bestDeviceId && videoDevices.length > 0) {
-                    bestDeviceId = videoDevices[videoDevices.length - 1].deviceId;
+
+                // Fallback: If no high-scoring camera found, use the first back camera we identified or just the first device
+                if (highestScore < 30) {
+                    bestDeviceId = defaultBackId || (videoDevices.length > 0 ? videoDevices[0].deviceId : null);
                 }
             }
 
+            // Stop the initial temporary stream
             stream.getTracks().forEach(t => t.stop());
 
-            if (bestDeviceId) {
-                setActiveCameraId(bestDeviceId);
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        deviceId: { exact: bestDeviceId },
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
-                    }
-                });
-            } else {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: 'environment',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
-                    }
-                });
-            }
+            const constraints: MediaStreamConstraints = bestDeviceId
+                ? { video: { deviceId: { exact: bestDeviceId }, width: { ideal: 4096, max: 4096 }, height: { ideal: 2160, max: 2160 }, frameRate: { ideal: 30 } } }
+                : { video: { facingMode: 'environment', width: { ideal: 4096 }, height: { ideal: 2160 } } };
 
-            // Try enabling focus mode separately
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+            // Apply advanced scanning constraints
             try {
                 const track = stream.getVideoTracks()[0];
                 const capabilities = track.getCapabilities() as any;
-                if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as any);
+                const advanced: any = {};
+
+                if (capabilities.focusMode?.includes('continuous')) advanced.focusMode = 'continuous';
+                if (capabilities.whiteBalanceMode?.includes('continuous')) advanced.whiteBalanceMode = 'continuous';
+                if (capabilities.exposureMode?.includes('continuous')) advanced.exposureMode = 'continuous';
+
+                if (Object.keys(advanced).length > 0) {
+                    await track.applyConstraints({ advanced: [advanced] } as any);
                 }
-            } catch (e) { }
+            } catch (e) {
+                console.warn("Advanced constraints failed", e);
+            }
+
+            if (bestDeviceId) {
+                setActiveCameraId(bestDeviceId);
+            }
 
             cameraStreamRef.current = stream;
 
