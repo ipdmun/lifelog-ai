@@ -184,15 +184,68 @@ export default function ScanPage() {
     const startCamera = useCallback(async () => {
         if (scanStage !== 'idle') return;
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    facingMode: 'environment',
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    ...({ focusMode: "continuous" } as any)
+            // 1. Initial request to ensure camera permissions are fully granted
+            let stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+
+            // 2. Enumerate devices to pick a non-ultrawide rear camera if available
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+            let bestDeviceId = null;
+            let foundStandard = false;
+
+            for (const device of videoDevices) {
+                const label = device.label.toLowerCase();
+                // Identify back camera
+                if (label.includes('back') || label.includes('environment')) {
+                    // Filter out ultrawide logic
+                    if (!label.includes('ultrawide') && !label.includes('ultra wide') && !label.includes('macro') && !label.includes('0.5x')) {
+                        bestDeviceId = device.deviceId;
+                        foundStandard = true;
+                        break;
+                    }
                 }
-            });
+            }
+
+            // Stop the temporary stream
+            stream.getTracks().forEach(t => t.stop());
+
+            // 3. Re-request with the ideal explicit device id, or fallback to environment
+            if (foundStandard && bestDeviceId) {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        deviceId: { exact: bestDeviceId },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        ...({ focusMode: "continuous" } as any)
+                    }
+                });
+            } else {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        ...({ focusMode: "continuous" } as any)
+                    }
+                });
+            }
+
             cameraStreamRef.current = stream;
+
+            // 4. Force optical/digital zoom back to 1.0 (Standard 1x scale) if supported
+            const track = stream.getVideoTracks()[0];
+            const capabilities = track.getCapabilities() as any;
+            if (capabilities.zoom) {
+                try {
+                    // Attempt to set 1x ratio (ignoring any <1.0 ultrawide range if present)
+                    const targetZoom = Math.max(capabilities.zoom.min || 1, 1);
+                    await track.applyConstraints({
+                        advanced: [{ zoom: targetZoom }]
+                    } as any);
+                } catch (e) { }
+            }
+
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
                 videoRef.current.play();
