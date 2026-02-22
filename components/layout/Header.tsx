@@ -151,24 +151,32 @@ export const Header: React.FC<HeaderProps> = ({
           <LanguageSwitcher />
 
           {user ? (
-            <div className="flex items-center gap-3 bg-[var(--color-neutral-100)] p-1 pr-3 rounded-full border border-[var(--color-neutral-200)]">
-              <div className="w-8 h-8 rounded-full bg-[var(--color-primary-600)] flex items-center justify-center text-white overflow-hidden">
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt={user.displayName || 'User'} className="w-full h-full object-cover" />
-                ) : (
-                  <UserIcon size={16} />
-                )}
+            <div className="flex items-center gap-3">
+              <Link href="/dashboard" className="text-sm font-semibold text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] hidden sm:block">
+                Dashboard
+              </Link>
+              <Link href="/diary" className="text-sm font-semibold text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] hidden sm:block">
+                Diary
+              </Link>
+              <div className="flex items-center gap-3 bg-[var(--color-neutral-100)] p-1 pr-3 rounded-full border border-[var(--color-neutral-200)] ml-2">
+                <div className="w-8 h-8 rounded-full bg-[var(--color-primary-600)] flex items-center justify-center text-white overflow-hidden">
+                  {user.photoURL ? (
+                    <img src={user.photoURL} alt={user.displayName || 'User'} className="w-full h-full object-cover" />
+                  ) : (
+                    <UserIcon size={16} />
+                  )}
+                </div>
+                <span className="text-sm font-medium text-[var(--color-neutral-700)] max-w-[100px] truncate">
+                  {user.displayName || 'Guest'}
+                </span>
+                <button
+                  onClick={() => logout()}
+                  className="p-1.5 rounded-full hover:bg-[var(--color-neutral-200)] text-[var(--color-neutral-500)] transition-colors"
+                  title="Logout"
+                >
+                  <LogOut size={14} />
+                </button>
               </div>
-              <span className="text-sm font-medium text-[var(--color-neutral-700)] max-w-[100px] truncate">
-                {user.displayName || 'Guest'}
-              </span>
-              <button
-                onClick={() => logout()}
-                className="p-1.5 rounded-full hover:bg-[var(--color-neutral-200)] text-[var(--color-neutral-500)] transition-colors"
-                title="Logout"
-              >
-                <LogOut size={14} />
-              </button>
             </div>
           ) : (
             <>

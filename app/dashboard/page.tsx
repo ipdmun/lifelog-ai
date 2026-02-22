@@ -102,6 +102,28 @@ export default function DashboardPage() {
     const [moodTrendData, setMoodTrendData] = useState<any[]>([]);
     const [isSyncing, setIsSyncing] = useState(false);
     const [selectedLog, setSelectedLog] = useState<LogItem | null>(null);
+    const [isEditingLog, setIsEditingLog] = useState(false);
+    const [editLogData, setEditLogData] = useState<LogItem | null>(null);
+
+    const handleSaveLogEdit = async () => {
+        if (!selectedLog || !editLogData) return;
+        const updatedLogs = recentLogs.map(l => l.id === editLogData.id ? editLogData : l);
+        setRecentLogs(updatedLogs);
+        if (user) {
+            const userDocRef = doc(db, "users", user.uid);
+            // Updating all logs arrays. A safer way is fetching but for MVP overwriting logs is okay if synced
+            setDoc(userDocRef, { logs: updatedLogs }, { merge: true }).catch(err => console.error(err));
+        } else {
+            const savedLogs = localStorage.getItem("dashboardLogs");
+            if (savedLogs) {
+                const parsed = JSON.parse(savedLogs);
+                const newParsed = parsed.map((l: any) => l.id === editLogData.id ? editLogData : l);
+                localStorage.setItem("dashboardLogs", JSON.stringify(newParsed));
+            }
+        }
+        setSelectedLog(editLogData);
+        setIsEditingLog(false);
+    };
 
     // Sync localStorage to Firestore when user logs in
     useEffect(() => {
@@ -423,14 +445,28 @@ export default function DashboardPage() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
                     <Card variant="elevated" className="w-full max-w-lg bg-white overflow-hidden shadow-2xl">
                         <CardHeader className="border-b border-[var(--color-neutral-100)] flex justify-between items-center bg-[var(--color-neutral-50)]/50">
-                            <div>
+                            <div className="flex-1 mr-4">
                                 <Badge variant={selectedLog.type === 'digital' ? 'primary' : 'outline'} className="mb-2">
                                     {selectedLog.type === 'digital' ? 'Digital Appt' : 'Analog Scan'}
                                 </Badge>
-                                <h3 className="text-lg font-bold text-[var(--color-neutral-900)] max-w-[280px] sm:max-w-[400px] truncate">
-                                    {selectedLog.summary || selectedLog.title}
-                                </h3>
+                                {isEditingLog ? (
+                                    <input
+                                        type="text"
+                                        className="w-full text-lg font-bold text-[var(--color-neutral-900)] bg-white border border-[var(--color-neutral-300)] rounded-md px-2 py-1"
+                                        value={editLogData?.summary || ''}
+                                        onChange={(e) => setEditLogData(prev => ({ ...prev!, summary: e.target.value, title: e.target.value }))}
+                                    />
+                                ) : (
+                                    <h3 className="text-lg font-bold text-[var(--color-neutral-900)] max-w-full truncate">
+                                        {selectedLog.summary || selectedLog.title}
+                                    </h3>
+                                )}
                             </div>
+                            {!isEditingLog && (
+                                <Button variant="outline" size="sm" onClick={() => { setIsEditingLog(true); setEditLogData(selectedLog); }}>
+                                    Edit
+                                </Button>
+                            )}
                         </CardHeader>
                         <CardContent className="max-h-[60vh] overflow-y-auto p-6 space-y-4">
                             {selectedLog.tags && selectedLog.tags.length > 0 && (
@@ -443,32 +479,71 @@ export default function DashboardPage() {
                                 </div>
                             )}
 
-                            {selectedLog.events && selectedLog.events.length > 0 ? (
-                                <div className="space-y-3">
-                                    <h4 className="text-sm font-semibold text-[var(--color-neutral-500)] tracking-wider">DETECTED EVENTS</h4>
-                                    <ul className="space-y-2">
-                                        {selectedLog.events.map((evt, idx) => (
-                                            <li key={idx} className="flex justify-between items-start gap-4 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-[var(--color-neutral-100)]">
-                                                <span className="text-sm text-[var(--color-neutral-600)] font-medium leading-relaxed max-w-[40%] flex-shrink-0">
-                                                    {evt.time}
-                                                </span>
-                                                <span className="text-sm font-bold text-[var(--color-neutral-900)] text-right break-words leading-relaxed flex-1">
-                                                    {evt.title}
-                                                </span>
+                            <div className="space-y-3">
+                                <h4 className="text-sm font-semibold text-[var(--color-neutral-500)] tracking-wider">DETECTED EVENTS</h4>
+                                {isEditingLog ? (
+                                    <ul className="space-y-3">
+                                        {(editLogData?.events || []).map((evt, idx) => (
+                                            <li key={idx} className="flex flex-col gap-2 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-[var(--color-primary-200)]">
+                                                <input
+                                                    type="text"
+                                                    className="text-sm text-[var(--color-neutral-600)] font-medium bg-white border border-[var(--color-neutral-300)] rounded-md px-2 py-1 w-full"
+                                                    value={evt.time}
+                                                    onChange={(e) => {
+                                                        const newEvts = [...(editLogData?.events || [])];
+                                                        newEvts[idx].time = e.target.value;
+                                                        setEditLogData(prev => ({ ...prev!, events: newEvts }));
+                                                    }}
+                                                />
+                                                <textarea
+                                                    className="text-sm font-bold text-[var(--color-neutral-900)] bg-white border border-[var(--color-neutral-300)] rounded-md px-2 py-1 w-full resize-none min-h-[60px]"
+                                                    value={evt.title}
+                                                    onChange={(e) => {
+                                                        const newEvts = [...(editLogData?.events || [])];
+                                                        newEvts[idx].title = e.target.value;
+                                                        setEditLogData(prev => ({ ...prev!, events: newEvts }));
+                                                    }}
+                                                />
                                             </li>
                                         ))}
                                     </ul>
-                                </div>
-                            ) : (
-                                <div className="py-6 text-center text-[var(--color-neutral-500)] italic border border-dashed border-[var(--color-neutral-200)] rounded-xl">
-                                    No detailed events captured.
-                                </div>
-                            )}
+                                ) : (
+                                    selectedLog.events && selectedLog.events.length > 0 ? (
+                                        <ul className="space-y-2">
+                                            {selectedLog.events.map((evt, idx) => (
+                                                <li key={idx} className="flex justify-between items-start gap-4 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-[var(--color-neutral-100)]">
+                                                    <span className="text-sm text-[var(--color-neutral-600)] font-medium leading-relaxed max-w-[40%] flex-shrink-0">
+                                                        {evt.time}
+                                                    </span>
+                                                    <span className="text-sm font-bold text-[var(--color-neutral-900)] text-right break-words leading-relaxed flex-1">
+                                                        {evt.title}
+                                                    </span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <div className="py-6 text-center text-[var(--color-neutral-500)] italic border border-dashed border-[var(--color-neutral-200)] rounded-xl">
+                                            No detailed events captured.
+                                        </div>
+                                    )
+                                )}
+                            </div>
                         </CardContent>
-                        <div className="p-4 border-t border-[var(--color-neutral-100)] bg-[var(--color-neutral-50)]/50">
-                            <Button fullWidth onClick={() => setSelectedLog(null)} variant="primary">
-                                Close
-                            </Button>
+                        <div className="p-4 border-t border-[var(--color-neutral-100)] bg-[var(--color-neutral-50)]/50 flex gap-3">
+                            {isEditingLog ? (
+                                <>
+                                    <Button fullWidth onClick={() => setIsEditingLog(false)} variant="outline">
+                                        Cancel
+                                    </Button>
+                                    <Button fullWidth onClick={handleSaveLogEdit} variant="primary">
+                                        Save Changes
+                                    </Button>
+                                </>
+                            ) : (
+                                <Button fullWidth onClick={() => setSelectedLog(null)} variant="primary">
+                                    Close
+                                </Button>
+                            )}
                         </div>
                     </Card>
                 </div>
