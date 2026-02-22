@@ -50,12 +50,88 @@ export default function ScanPage() {
     useEffect(() => {
         if (scanStage === 'idle' && capturedImage) {
             setImage(capturedImage);
-            setCropPoints([
-                { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
-            ]);
-            setScanStage('cropping');
+
+            const runDetection = async () => {
+                if (!cvReady) {
+                    setCropPoints([
+                        { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
+                    ]);
+                    setScanStage('cropping');
+                    return;
+                }
+
+                try {
+                    const img = new Image();
+                    img.src = capturedImage;
+                    await new Promise((resolve) => { img.onload = resolve; });
+
+                    const canvas = document.createElement('canvas');
+                    const scale = Math.min(1000 / Math.max(img.width, img.height), 1);
+                    canvas.width = img.width * scale;
+                    canvas.height = img.height * scale;
+                    const ctx = canvas.getContext('2d')!;
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    const cv = (window as any).cv;
+                    const src = cv.imread(canvas);
+                    const dst = new cv.Mat();
+                    cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
+                    cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+                    cv.Canny(dst, dst, 75, 200, 3, false);
+
+                    const contours = new cv.MatVector();
+                    const hierarchy = new cv.Mat();
+                    cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+                    let maxArea = 0;
+                    let approx = new cv.Mat();
+                    let found = false;
+
+                    for (let i = 0; i < contours.size(); ++i) {
+                        const contour = contours.get(i);
+                        const area = cv.contourArea(contour, false);
+                        if (area > (canvas.width * canvas.height * 0.05) && area > maxArea) {
+                            const peri = cv.arcLength(contour, true);
+                            const tmpApprox = new cv.Mat();
+                            cv.approxPolyDP(contour, tmpApprox, 0.02 * peri, true);
+                            if (tmpApprox.rows === 4) {
+                                maxArea = area;
+                                tmpApprox.copyTo(approx);
+                                found = true;
+                            }
+                            tmpApprox.delete();
+                        }
+                        contour.delete();
+                    }
+
+                    if (found) {
+                        const pts = [];
+                        for (let i = 0; i < 4; i++) {
+                            pts.push({ x: (approx.data32S[i * 2] / canvas.width) * 100, y: (approx.data32S[i * 2 + 1] / canvas.height) * 100 });
+                        }
+                        pts.sort((a, b) => a.y - b.y);
+                        const top = pts.slice(0, 2).sort((a, b) => a.x - b.x);
+                        const bottom = pts.slice(2, 4).sort((a, b) => a.x - b.x);
+                        setCropPoints([top[0], top[1], bottom[1], bottom[0]]);
+                    } else {
+                        setCropPoints([
+                            { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
+                        ]);
+                    }
+
+                    src.delete(); dst.delete(); contours.delete(); hierarchy.delete(); approx.delete();
+                } catch (e) {
+                    console.error("Auto crop failed:", e);
+                    setCropPoints([
+                        { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
+                    ]);
+                }
+                setScanStage('cropping');
+            };
+
+            runDetection();
         }
-    }, [scanStage, capturedImage]);
+    }, [scanStage, capturedImage, cvReady]);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -320,181 +396,183 @@ export default function ScanPage() {
 
                 {/* CROPPING & RESULT STAGES */}
                 {scanStage !== 'idle' && (
-                    <div
-                        ref={containerRef}
-                        className={cn(
-                            "relative w-full max-w-2xl aspect-[9/16] sm:aspect-[3/4] rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 ease-in-out touch-none",
-                            scanStage === 'transforming' ? "scale-95 bg-black" : "bg-[var(--color-neutral-800)] scale-100"
-                        )}
-                        onPointerMove={pointerMoveHandler}
-                    >
-                        <div className={cn(
-                            "absolute inset-0 transition-transform duration-1000 ease-out",
-                            (scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital'))
-                                ? "scale-100 rotate-0 brightness-105 contrast-110"
-                                : ""
-                        )}>
-                            <img
-                                src={(scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital')) && transformedImage ? transformedImage : (image || undefined)}
-                                alt="Scanned diary page"
-                                className="w-full h-full object-fill pointer-events-none"
-                            />
-                        </div>
+                    <div className="w-full flex-1 flex flex-col items-center justify-center pt-8">
+                        <div
+                            ref={containerRef}
+                            className={cn(
+                                "relative w-full max-w-[calc(65vh*9/16)] sm:max-w-md max-h-[65vh] mx-auto aspect-[9/16] sm:aspect-[3/4] rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 ease-in-out touch-none",
+                                scanStage === 'transforming' ? "scale-95 bg-black" : "bg-[var(--color-neutral-800)] scale-100"
+                            )}
+                            onPointerMove={pointerMoveHandler}
+                        >
+                            <div className={cn(
+                                "absolute inset-0 transition-transform duration-1000 ease-out",
+                                (scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital'))
+                                    ? "scale-100 rotate-0 brightness-105 contrast-110"
+                                    : ""
+                            )}>
+                                <img
+                                    src={(scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital')) && transformedImage ? transformedImage : (image || undefined)}
+                                    alt="Scanned diary page"
+                                    className="w-full h-full object-fill pointer-events-none"
+                                />
+                            </div>
 
-                        {/* Interactive Cropping Overlay */}
-                        {scanStage === 'cropping' && (
-                            <div className="absolute inset-0 z-30">
-                                <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
-                                    {/* Edges with Handles */}
-                                    {cropPoints.map((p, i) => {
-                                        const nextP = cropPoints[(i + 1) % 4];
-                                        const midX = (p.x + nextP.x) / 2;
-                                        const midY = (p.y + nextP.y) / 2;
+                            {/* Interactive Cropping Overlay */}
+                            {scanStage === 'cropping' && (
+                                <div className="absolute inset-0 z-30">
+                                    <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
+                                        {/* Edges with Handles */}
+                                        {cropPoints.map((p, i) => {
+                                            const nextP = cropPoints[(i + 1) % 4];
+                                            const midX = (p.x + nextP.x) / 2;
+                                            const midY = (p.y + nextP.y) / 2;
 
-                                        // Calculate the start/end points of the handle so it's perfectly in line
-                                        const dx = nextP.x - p.x;
-                                        const dy = nextP.y - p.y;
-                                        const hLen = 0.08; // 8% of the edge length each way (16% total length)
-                                        const hX1 = midX - dx * hLen;
-                                        const hY1 = midY - dy * hLen;
-                                        const hX2 = midX + dx * hLen;
-                                        const hY2 = midY + dy * hLen;
+                                            // Calculate the start/end points of the handle so it's perfectly in line
+                                            const dx = nextP.x - p.x;
+                                            const dy = nextP.y - p.y;
+                                            const hLen = 0.08; // 8% of the edge length each way (16% total length)
+                                            const hX1 = midX - dx * hLen;
+                                            const hY1 = midY - dy * hLen;
+                                            const hX2 = midX + dx * hLen;
+                                            const hY2 = midY + dy * hLen;
 
-                                        return (
-                                            <g key={`edge-${i}`}>
-                                                {/* The thin solid connecting line */}
-                                                <line
-                                                    x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
-                                                    stroke="rgba(255, 255, 255, 0.9)" strokeWidth="2.5"
-                                                    className="pointer-events-none drop-shadow-md"
-                                                />
-                                                {/* Thick invisible interaction line */}
-                                                <line
-                                                    x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
-                                                    stroke="transparent" strokeWidth="40"
-                                                    className="cursor-move pointer-events-auto touch-none"
-                                                    onPointerDown={(e) => {
-                                                        e.preventDefault();
-                                                        setActiveElement(`e${i}`);
-                                                        if (containerRef.current) {
-                                                            const r = containerRef.current.getBoundingClientRect();
-                                                            lastPointerPos.current = {
-                                                                x: ((e.clientX - r.left) / r.width) * 100,
-                                                                y: ((e.clientY - r.top) / r.height) * 100
-                                                            };
-                                                        }
-                                                        e.currentTarget.setPointerCapture(e.pointerId);
-                                                    }}
-                                                    onPointerUp={pointerUpHandler} onPointerCancel={pointerUpHandler}
-                                                />
-                                                {/* Visual Handle - The White Bar perfectly sloped */}
-                                                <line
-                                                    x1={`${hX1}%`} y1={`${hY1}%`} x2={`${hX2}%`} y2={`${hY2}%`}
-                                                    stroke="white" strokeWidth="6" strokeLinecap="round"
-                                                    className="pointer-events-none drop-shadow-md"
-                                                />
-                                            </g>
-                                        );
-                                    })}
+                                            return (
+                                                <g key={`edge-${i}`}>
+                                                    {/* The thin solid connecting line */}
+                                                    <line
+                                                        x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
+                                                        stroke="rgba(255, 255, 255, 0.9)" strokeWidth="2.5"
+                                                        className="pointer-events-none drop-shadow-md"
+                                                    />
+                                                    {/* Thick invisible interaction line */}
+                                                    <line
+                                                        x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
+                                                        stroke="transparent" strokeWidth="40"
+                                                        className="cursor-move pointer-events-auto touch-none"
+                                                        onPointerDown={(e) => {
+                                                            e.preventDefault();
+                                                            setActiveElement(`e${i}`);
+                                                            if (containerRef.current) {
+                                                                const r = containerRef.current.getBoundingClientRect();
+                                                                lastPointerPos.current = {
+                                                                    x: ((e.clientX - r.left) / r.width) * 100,
+                                                                    y: ((e.clientY - r.top) / r.height) * 100
+                                                                };
+                                                            }
+                                                            e.currentTarget.setPointerCapture(e.pointerId);
+                                                        }}
+                                                        onPointerUp={pointerUpHandler} onPointerCancel={pointerUpHandler}
+                                                    />
+                                                    {/* Visual Handle - The White Bar perfectly sloped */}
+                                                    <line
+                                                        x1={`${hX1}%`} y1={`${hY1}%`} x2={`${hX2}%`} y2={`${hY2}%`}
+                                                        stroke="white" strokeWidth="6" strokeLinecap="round"
+                                                        className="pointer-events-none drop-shadow-md"
+                                                    />
+                                                </g>
+                                            );
+                                        })}
 
-                                    {/* Corners */}
-                                    {cropPoints.map((p, i) => (
-                                        <circle
-                                            key={i}
-                                            cx={`${p.x}%`}
-                                            cy={`${p.y}%`}
-                                            r="32"
-                                            fill="transparent"
-                                            className="cursor-pointer pointer-events-auto touch-none"
-                                            onPointerDown={(e) => {
-                                                e.preventDefault();
-                                                setActiveElement(i);
-                                                e.currentTarget.setPointerCapture(e.pointerId);
-                                            }}
-                                            onPointerUp={pointerUpHandler}
-                                            onPointerCancel={pointerUpHandler}
-                                        />
-                                    ))}
-                                    {/* Visual inner dot */}
-                                    {cropPoints.map((p, i) => (
-                                        <circle
-                                            key={`vis-${i}`}
-                                            cx={`${p.x}%`}
-                                            cy={`${p.y}%`}
-                                            r="10"
-                                            fill="white"
-                                            stroke="rgba(0,0,0,0.3)"
-                                            strokeWidth="1"
-                                            className="pointer-events-none drop-shadow-md"
-                                        />
-                                    ))}
-                                </svg>
-
-                                {activeElement !== null && (
-                                    <div
-                                        className={cn(
-                                            "absolute w-36 h-36 rounded-2xl shadow-[0_12px_48px_rgba(0,0,0,0.7)] overflow-hidden pointer-events-none z-50 bg-black transition-opacity duration-200 border-2 border-white/50",
-                                            activeElement !== null ? "opacity-100" : "opacity-0"
-                                        )}
-                                        style={{
-                                            left: `${Math.min(Math.max(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2, 25), 75)}%`,
-                                            top: `${Math.max((typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) - 30, 20)}%`,
-                                            transform: 'translate(-50%, -100%)'
-                                        }}
-                                    >
-                                        <div className="w-full h-full relative">
-                                            <img
-                                                src={image as string}
-                                                className="absolute max-w-none w-[800%] h-[800%] object-fill"
-                                                style={{
-                                                    left: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2) * 8 - 50}%`,
-                                                    top: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) * 8 - 50}%`,
+                                        {/* Corners */}
+                                        {cropPoints.map((p, i) => (
+                                            <circle
+                                                key={i}
+                                                cx={`${p.x}%`}
+                                                cy={`${p.y}%`}
+                                                r="32"
+                                                fill="transparent"
+                                                className="cursor-pointer pointer-events-auto touch-none"
+                                                onPointerDown={(e) => {
+                                                    e.preventDefault();
+                                                    setActiveElement(i);
+                                                    e.currentTarget.setPointerCapture(e.pointerId);
                                                 }}
-                                                alt=""
+                                                onPointerUp={pointerUpHandler}
+                                                onPointerCancel={pointerUpHandler}
                                             />
-                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                                <div className="w-[1px] h-full bg-white/30" />
-                                                <div className="absolute w-full h-[1px] bg-white/30" />
-                                                <div className="w-2 h-2 rounded-full border border-white/50 bg-[var(--color-primary-500)]" />
+                                        ))}
+                                        {/* Visual inner dot */}
+                                        {cropPoints.map((p, i) => (
+                                            <circle
+                                                key={`vis-${i}`}
+                                                cx={`${p.x}%`}
+                                                cy={`${p.y}%`}
+                                                r="10"
+                                                fill="white"
+                                                stroke="rgba(0,0,0,0.3)"
+                                                strokeWidth="1"
+                                                className="pointer-events-none drop-shadow-md"
+                                            />
+                                        ))}
+                                    </svg>
+
+                                    {activeElement !== null && (
+                                        <div
+                                            className={cn(
+                                                "absolute w-36 h-36 rounded-2xl shadow-[0_12px_48px_rgba(0,0,0,0.7)] overflow-hidden pointer-events-none z-50 bg-black transition-opacity duration-200 border-2 border-white/50",
+                                                activeElement !== null ? "opacity-100" : "opacity-0"
+                                            )}
+                                            style={{
+                                                left: `${Math.min(Math.max(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2, 25), 75)}%`,
+                                                top: `${Math.max((typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) - 30, 20)}%`,
+                                                transform: 'translate(-50%, -100%)'
+                                            }}
+                                        >
+                                            <div className="w-full h-full relative">
+                                                <img
+                                                    src={image as string}
+                                                    className="absolute max-w-none w-[800%] h-[800%] object-fill"
+                                                    style={{
+                                                        left: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2) * 8 - 50}%`,
+                                                        top: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) * 8 - 50}%`,
+                                                    }}
+                                                    alt=""
+                                                />
+                                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                                    <div className="w-[1px] h-full bg-white/30" />
+                                                    <div className="absolute w-full h-[1px] bg-white/30" />
+                                                    <div className="w-2 h-2 rounded-full border border-white/50 bg-[var(--color-primary-500)]" />
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
 
-                            </div>
-                        )}
-
-                        {/* Processing Overlay */}
-                        {scanStage === 'analyzing' && (
-                            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px]">
-                                <div className="w-20 h-20 relative mb-6">
-                                    <div className="absolute inset-0 border-4 border-[var(--color-primary-500)] rounded-full animate-ping opacity-30"></div>
-                                    <div className="absolute inset-0 border-4 border-t-[var(--color-primary-500)] rounded-full animate-spin"></div>
                                 </div>
-                                <p className="font-semibold text-lg flex items-center gap-2 animate-pulse text-white drop-shadow-md">
-                                    <Sparkles size={20} className="text-[var(--color-primary-400)]" />
-                                    {t('statusAnalyzing')}
-                                </p>
+                            )}
+
+                            {/* Processing Overlay */}
+                            {scanStage === 'analyzing' && (
+                                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px]">
+                                    <div className="w-20 h-20 relative mb-6">
+                                        <div className="absolute inset-0 border-4 border-[var(--color-primary-500)] rounded-full animate-ping opacity-30"></div>
+                                        <div className="absolute inset-0 border-4 border-t-[var(--color-primary-500)] rounded-full animate-spin"></div>
+                                    </div>
+                                    <p className="font-semibold text-lg flex items-center gap-2 animate-pulse text-white drop-shadow-md">
+                                        <Sparkles size={20} className="text-[var(--color-primary-400)]" />
+                                        {t('statusAnalyzing')}
+                                    </p>
+                                </div>
+                            )}
+                            {scanStage === 'analyzing' && (
+                                <div
+                                    className="absolute top-0 left-0 w-full h-1 bg-[var(--color-primary-500)] z-20"
+                                    style={{ boxShadow: '0 0 15px var(--color-primary-500)', animation: 'scan 2s ease-in-out infinite' }}
+                                />
+                            )}
+                        </div>
+
+                        {/* External Control Bar */}
+                        {scanStage === 'cropping' && (
+                            <div className="w-full max-w-sm mx-auto flex justify-between gap-4 mt-8 pointer-events-auto">
+                                <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-[var(--color-neutral-800)] text-white hover:bg-[var(--color-neutral-700)] backdrop-blur-md border border-white/20 py-6 text-lg rounded-2xl shadow-xl font-semibold">
+                                    {t('btnDiscard')}
+                                </Button>
+                                <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-[0_8px_32px_rgba(245,158,11,0.4)] text-lg rounded-2xl font-bold border border-white/10 mt-0">
+                                    {t('btnConfirmCrop')}
+                                </Button>
                             </div>
                         )}
-                        {scanStage === 'analyzing' && (
-                            <div
-                                className="absolute top-0 left-0 w-full h-1 bg-[var(--color-primary-500)] z-20"
-                                style={{ boxShadow: '0 0 15px var(--color-primary-500)', animation: 'scan 2s ease-in-out infinite' }}
-                            />
-                        )}
-                    </div>
-                )}
-
-                {/* External Control Bar */}
-                {scanStage === 'cropping' && (
-                    <div className="fixed bottom-6 left-0 right-0 px-6 sm:max-w-2xl sm:mx-auto flex justify-between gap-4 pointer-events-auto z-50">
-                        <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-black/70 text-white hover:bg-black/90 backdrop-blur-md border border-white/20 py-6 text-lg rounded-2xl shadow-xl font-semibold">
-                            {t('btnDiscard')}
-                        </Button>
-                        <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-[0_8px_32px_rgba(245,158,11,0.4)] text-lg rounded-2xl font-bold border border-white/10 mt-0">
-                            {t('btnConfirmCrop')}
-                        </Button>
                     </div>
                 )}
 
