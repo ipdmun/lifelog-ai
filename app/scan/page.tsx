@@ -72,11 +72,6 @@ export default function ScanPage() {
             // Canny edge detection
             cv.Canny(dst, dst, 40, 120, 3, false);
 
-            // Dilate edges to connect broken parts of the document contour
-            const M = cv.Mat.ones(3, 3, cv.CV_8U);
-            cv.dilate(dst, dst, M, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
-            M.delete();
-
             const contours = new cv.MatVector();
             const hierarchy = new cv.Mat();
             cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
@@ -338,11 +333,28 @@ export default function ScanPage() {
 
             const w1 = Math.hypot(orderedPts[2].x - orderedPts[3].x, orderedPts[2].y - orderedPts[3].y);
             const w2 = Math.hypot(orderedPts[1].x - orderedPts[0].x, orderedPts[1].y - orderedPts[0].y);
-            const maxWidth = Math.max(w1, w2);
+            let maxWidth = Math.max(w1, w2);
 
             const h1 = Math.hypot(orderedPts[1].x - orderedPts[2].x, orderedPts[1].y - orderedPts[2].y);
             const h2 = Math.hypot(orderedPts[0].x - orderedPts[3].x, orderedPts[0].y - orderedPts[3].y);
-            const maxHeight = Math.max(h1, h2);
+            let maxHeight = Math.max(h1, h2);
+
+            // Pro-level feature: Automatically correct the aspect ratio by snapping to real-world document standard proportions
+            // This prevents the "squashed/stretched" look when taking photos from an angle!
+            const ratio = maxWidth / maxHeight;
+            if (ratio > 0.60 && ratio < 0.82) {
+                // B7 Passport / ID Card Portrait (88x125mm -> ratio: ~0.704)
+                maxHeight = maxWidth / 0.704;
+            } else if (ratio > 1.25 && ratio < 1.65) {
+                // ID Card Landscape (e.g. Driver's License)
+                maxWidth = maxHeight * 1.42;
+            } else if (ratio > 0.85 && ratio < 1.15) {
+                // Perfect Square (e.g. Polaroid, QR code)
+                maxHeight = maxWidth;
+            } else if (ratio > 0.40 && ratio < 0.60) {
+                // Tall Receipts (no strict fix needed, but slight regularization helps)
+                // maxHeight = maxWidth / 0.5;
+            }
 
             const dstCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [
                 0, 0,
