@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Camera, ArrowLeft, Check, Sparkles, X, Image as ImageIcon } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -18,6 +19,7 @@ import { LogItem } from "@/components/dashboard/LogTimeline";
 
 interface ScanResult {
     summary: string;
+    logDate?: string;
     sentiment: string;
     events: Array<{
         time: string;
@@ -29,6 +31,7 @@ interface ScanResult {
 export default function ScanPage() {
     const { t, locale } = useLanguage();
     const { user } = useAuth();
+    const router = useRouter();
     const [image, setImage] = useState<string | null>(null);
     const [scanStage, setScanStage] = useState<'idle' | 'cropping' | 'transforming' | 'analyzing' | 'complete'>('idle');
     const [cropPoints, setCropPoints] = useState<{ x: number, y: number }[]>([
@@ -192,39 +195,56 @@ export default function ScanPage() {
             const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
             let bestDeviceId = null;
-            let foundStandard = false;
+            let highestScore = -1;
 
             for (const device of videoDevices) {
                 const label = device.label.toLowerCase();
+                let score = 0;
+
                 // Identify back camera
                 if (label.includes('back') || label.includes('environment') || label.includes('후면')) {
-                    // Filter out ultrawide logic - being very careful about Korean translations
-                    // "초광각" is Ultrawide, "울트라" is Ultra, "0.5x". Don't block "광각" alone as it often means the standard main wide lens on iOS/Android.
-                    if (!label.includes('ultrawide') && !label.includes('ultra wide') && !label.includes('macro') && !label.includes('0.5x') && !label.includes('초광각') && !label.includes('울트라') && !label.includes('텔레포토') && !label.includes('망원')) {
+                    score += 10;
+
+                    // Prioritize "main" or "standard" camera
+                    if (label.includes('main') || label.includes('standard') || label.includes('기본')) score += 5;
+
+                    // Heavily penalize ultrawide / 0.5x / wide (sometimes wide means ultrawide)
+                    if (label.includes('wide') || label.includes('초광각') || label.includes('0.5x')) score -= 15;
+                    if (label.includes('ultra')) score -= 15;
+
+                    // Penalize telephoto/macro
+                    if (label.includes('tele') || label.includes('망원') || label.includes('macro')) score -= 10;
+
+                    if (score > highestScore) {
+                        highestScore = score;
                         bestDeviceId = device.deviceId;
-                        foundStandard = true;
-                        break;
                     }
                 }
+            }
+
+            // If no "back" camera found with scoring, fall back to last camera
+            if (!bestDeviceId && videoDevices.length > 0) {
+                bestDeviceId = videoDevices[videoDevices.length - 1].deviceId;
             }
 
             // Stop the temporary stream
             stream.getTracks().forEach(t => t.stop());
 
-            // 3. Re-request with the ideal explicit device id, or fallback to environment
-            if (foundStandard && bestDeviceId) {
+            // 3. Re-request with the best explicit device id
+            if (bestDeviceId) {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         deviceId: { exact: bestDeviceId },
                         width: { ideal: 1920, max: 2560 },
                         height: { ideal: 1080, max: 1440 },
+                        // Focus on high quality and standard focus
                         advanced: [{ focusMode: "continuous" }] as any
                     }
                 });
             } else {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
-                        facingMode: 'environment', // Fallback to whatever environment is
+                        facingMode: 'environment',
                         width: { ideal: 1920, max: 2560 },
                         height: { ideal: 1080, max: 1440 },
                         advanced: [{ focusMode: "continuous" }] as any
@@ -286,23 +306,36 @@ export default function ScanPage() {
         setTimeout(() => setFocusPoint(null), 1500);
 
         try {
+            // Some browsers require certain sequence to trigger focus
+            // 1. Try single-shot if supported, merged with manual
+            const focusConstraint = capabilities.focusMode.includes("single-shot")
+                ? "single-shot"
+                : "manual";
+
             await track.applyConstraints({
                 advanced: [{
-                    focusMode: "manual",
+                    focusMode: focusConstraint,
+                    // Note: pointsOfInterest support is rare but we include it for best effort
+                    // We also try to use coordinates mapped to 0..1 range
                     pointsOfInterest: [{ x: x / rect.width, y: y / rect.height }]
                 }]
             } as any);
 
-            // Re-enable continuous auto focus after 2 seconds
+            // Re-apply continuous auto focus after a short delay to "lock" it in or resume
             setTimeout(async () => {
                 try {
                     await track.applyConstraints({
                         advanced: [{ focusMode: "continuous" }]
                     } as any);
                 } catch (e) { }
-            }, 2000);
+            }, 1000);
         } catch (err) {
-            console.warn("Manual focus not supported: ", err);
+            console.warn("Focus constraint failed, trying simple continuous reset:", err);
+            // Fallback: Just toggle continuous mode to force a refocus
+            try {
+                await track.applyConstraints({ advanced: [{ focusMode: "manual" }] } as any);
+                await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] } as any);
+            } catch (e) { }
         }
     }, []);
 
@@ -494,9 +527,18 @@ export default function ScanPage() {
             const aiResult = await analyzeImageWithAI(finalImageUrl, locale);
 
             if (aiResult.success && aiResult.data) {
+                const data = aiResult.data;
+                // Intelligent fallback: If logDate is missing or not a valid date, check events for a date
+                if ((!data.logDate || isNaN(new Date(data.logDate).getTime())) && data.events) {
+                    const dateEvent = data.events.find((e: any) => e.date && !isNaN(new Date(e.date).getTime()));
+                    if (dateEvent) {
+                        data.logDate = dateEvent.date;
+                    }
+                }
+
                 setScanStage('complete');
                 setViewMode('digital');
-                setResult(aiResult.data);
+                setResult(data);
                 announce('Analysis complete', 'polite');
             } else {
                 throw new Error(aiResult.error || "AI failed to process the image");
@@ -526,32 +568,44 @@ export default function ScanPage() {
 
         announce('Saving to log...', 'polite');
 
+        const logDate = result.logDate ? new Date(result.logDate) : new Date();
+        // If the date is valid, use it, otherwise use today
+        const finalDate = isNaN(logDate.getTime()) ? new Date() : logDate;
+
         const newLog: LogItem = {
             id: 'scan-' + Date.now(),
             type: 'analog',
             title: result.summary.length > 30 ? result.summary.substring(0, 30) + "..." : result.summary,
-            timestamp: new Date(),
+            timestamp: finalDate,
             eventCount: result.events.length || 1,
             summary: result.summary,
             tags: result.tags,
             events: result.events
         };
 
-        if (user) {
-            try {
+        try {
+            if (user) {
                 const userDocRef = doc(db, "users", user.uid);
                 await updateDoc(userDocRef, {
-                    logs: arrayUnion(newLog)
+                    logs: arrayUnion({
+                        ...newLog,
+                        timestamp: finalDate.toISOString()
+                    })
                 });
-            } catch (err) {
-                console.error("Firestore save error:", err);
+            } else {
+                // LocalStorage fallback
+                const savedLogs = localStorage.getItem("dashboardLogs");
+                const parsed = savedLogs ? JSON.parse(savedLogs) : [];
+                parsed.push({
+                    ...newLog,
+                    timestamp: finalDate.toISOString()
+                });
+                localStorage.setItem("dashboardLogs", JSON.stringify(parsed));
             }
-        } else {
-            // LocalStorage fallback
-            const savedLogs = localStorage.getItem("dashboardLogs");
-            const parsed = savedLogs ? JSON.parse(savedLogs) : [];
-            parsed.push(newLog);
-            localStorage.setItem("dashboardLogs", JSON.stringify(parsed));
+            router.push('/dashboard');
+        } catch (err) {
+            console.error("Save error:", err);
+            announce('Save failed', 'polite');
         }
     };
 
@@ -942,6 +996,15 @@ export default function ScanPage() {
 
                             {viewMode === 'digital' && (
                                 <div className="bg-[var(--color-neutral-700)] p-6 rounded-xl border border-[var(--color-neutral-600)] animate-fade-in">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <Sparkles size={16} className="text-[var(--color-primary-400)]" />
+                                        <input
+                                            type="date"
+                                            className="bg-transparent text-sm font-medium text-[var(--color-neutral-300)] border border-[var(--color-neutral-600)] rounded px-2 py-1 outline-none focus:border-[var(--color-primary-500)]"
+                                            value={result.logDate || new Date().toISOString().split('T')[0]}
+                                            onChange={(e) => setResult({ ...result, logDate: e.target.value })}
+                                        />
+                                    </div>
                                     <textarea
                                         className="text-base text-[var(--color-neutral-200)] italic mb-4 leading-relaxed bg-transparent border border-transparent hover:border-[var(--color-neutral-600)] focus:border-[var(--color-primary-500)] focus:bg-[var(--color-neutral-800)] rounded-md w-full resize-none outline-none py-1 px-2 transition-all"
                                         value={result.summary}
@@ -996,11 +1059,9 @@ export default function ScanPage() {
                                 <Button variant="ghost" size="lg" onClick={handleDiscard} className="flex-1 text-[var(--color-neutral-300)] hover:text-[var(--color-neutral-50)]">
                                     {t('btnDiscard')}
                                 </Button>
-                                <Link href="/dashboard" className="flex-1">
-                                    <Button variant="primary" size="lg" onClick={handleSave} fullWidth>
-                                        {t('btnSaveLog')}
-                                    </Button>
-                                </Link>
+                                <Button variant="primary" size="lg" onClick={handleSave} className="flex-1">
+                                    {t('btnSaveLog')}
+                                </Button>
                             </div>
                         </div>
                     </div>

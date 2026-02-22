@@ -187,14 +187,16 @@ export default function DashboardPage() {
                     const logs = data.logs || [];
                     const events = data.events || [];
 
-                    const restoredLogs = logs.map((l: any) => ({
-                        ...l,
-                        timestamp: l.timestamp?.seconds ? new Date(l.timestamp.seconds * 1000) : new Date(l.timestamp)
-                    }));
-                    const restoredEvents = events.map((e: any) => ({
-                        ...e,
-                        startDate: e.startDate?.seconds ? new Date(e.startDate.seconds * 1000) : new Date(e.startDate)
-                    }));
+                    const restoredLogs = logs.map((l: any) => {
+                        let d = l.timestamp?.seconds ? new Date(l.timestamp.seconds * 1000) : new Date(l.timestamp);
+                        if (isNaN(d.getTime())) d = new Date();
+                        return { ...l, timestamp: d };
+                    });
+                    const restoredEvents = events.map((e: any) => {
+                        let d = e.startDate?.seconds ? new Date(e.startDate.seconds * 1000) : new Date(e.startDate);
+                        if (isNaN(d.getTime())) d = new Date();
+                        return { ...e, startDate: d };
+                    });
 
                     updateState(restoredLogs, restoredEvents);
                 } else {

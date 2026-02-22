@@ -188,17 +188,22 @@ export default function DiaryPage() {
                     const logs = data.logs || [];
                     const events = data.events || [];
 
-                    const restoredLogs = logs.map((l: any) => ({
-                        ...l,
-                        timestamp: l.timestamp?.seconds ? new Date(l.timestamp.seconds * 1000) : new Date(l.timestamp)
-                    }));
-                    const restoredEvents = events.map((e: any) => ({
-                        id: 'cal-' + e.id,
-                        type: 'digital',
-                        title: e.summary,
-                        timestamp: e.startDate?.seconds ? new Date(e.startDate.seconds * 1000) : new Date(e.startDate),
-                        eventCount: 1
-                    }));
+                    const restoredLogs = logs.map((l: any) => {
+                        let d = l.timestamp?.seconds ? new Date(l.timestamp.seconds * 1000) : new Date(l.timestamp);
+                        if (isNaN(d.getTime())) d = new Date();
+                        return { ...l, timestamp: d };
+                    });
+                    const restoredEvents = events.map((e: any) => {
+                        let d = e.startDate?.seconds ? new Date(e.startDate.seconds * 1000) : new Date(e.startDate);
+                        if (isNaN(d.getTime())) d = new Date();
+                        return {
+                            id: 'cal-' + e.id,
+                            type: 'digital',
+                            title: e.summary,
+                            timestamp: d,
+                            eventCount: 1
+                        };
+                    });
 
                     const combined = [...restoredLogs, ...restoredEvents];
                     combined.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());

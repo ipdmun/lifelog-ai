@@ -16,25 +16,24 @@ export async function analyzeImageWithAI(base64Image: string, locale: string) {
 
         const prompt = `
 You are an advanced document analysis AI. 
-I am sending you an image of a document (e.g., passport, receipt, business card, notebook).
-Your task is to extract its key information, understand the context, and respond in JSON format.
+I am sending you an image of a document (handwritten notes, business docs, calendar).
+Your task is to extract its key information, especially the PRIMARY DATE of the record.
 
-CRITICAL INSTRUCTION FOR LANGUAGE:
-- Do NOT translate the text written in the document. 
-- If the document is written in English, extract it in English.
-- If it is written in Korean, extract it in Korean.
-- The "summary" and "tags" should be in ${locale === 'ko' ? 'Korean' : locale === 'jp' ? 'Japanese' : 'English'}.
-- However, the "title" and "time" values in the "events" array MUST strictly be in the original language exactly as written in the image.
+CRITICAL INSTRUCTION FOR DATE DETECTION:
+- Find the primary date the user is writing about (e.g., "12/1", "1/23", "Starting Date: 12/4").
+- This date MUST be returned in the "logDate" field as "YYYY-MM-DD". Assume year 2026 if not specified.
+- If multiple dates exist, "Starting Date" or the most prominent date at the top is the "logDate".
+- "logDate" is mandatory for calendar synchronization. Never leave it null if any date is found.
 
-Follow this JSON structure exactly:
+Follow this JSON structure:
 {
-  "summary": "A clear, concice single-sentence title or summary of what this document is (e.g., 'Republic of Korea Passport', 'Starbucks Coffee Receipt', 'Handwritten meeting notes')",
+  "summary": "Short summary",
+  "logDate": "YYYY-MM-DD (MANDATORY if date found)",
   "events": [
-    {"time": "Field Name 1", "title": "Original Value exactly as written (e.g. Name, Date, Amount)", "date": "YYYY-MM-DD (Parse out the strict date ONLY if a specific real date is implicitly/explicitly mentioned or meant. Otherwise omit or null)"},
-    {"time": "Field Name 2", "title": "Original Value 2", "date": "..."}
+    {"time": "Field Label", "title": "Value", "date": "YYYY-MM-DD"}
   ],
-  "sentiment": "Neutral (or Positive/Negative if it's a mood diary)",
-  "tags": ["Tag1", "Tag2"]
+  "sentiment": "Neutral",
+  "tags": ["tag1"]
 }
 `;
 
