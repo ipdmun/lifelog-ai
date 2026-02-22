@@ -81,7 +81,11 @@ export default function DiaryPage() {
 
         if (user) {
             const userDocRef = doc(db, "users", user.uid);
-            await setDoc(userDocRef, { logs: updatedLogs.filter(l => l.type === 'analog') }, { merge: true });
+            const analogLogsToSave = updatedLogs.filter(l => l.type === 'analog').map(l => ({
+                ...l,
+                timestamp: l.timestamp instanceof Date ? l.timestamp.toISOString() : l.timestamp
+            }));
+            await setDoc(userDocRef, { logs: analogLogsToSave }, { merge: true });
         } else {
             const savedLogs = localStorage.getItem("dashboardLogs");
             if (savedLogs) {
@@ -104,12 +108,15 @@ export default function DiaryPage() {
                     const logs = data.logs || [];
                     const events = data.events || [];
 
-                    const restoredLogs = logs.map((l: any) => ({ ...l, timestamp: new Date(l.timestamp) }));
+                    const restoredLogs = logs.map((l: any) => ({
+                        ...l,
+                        timestamp: l.timestamp?.seconds ? new Date(l.timestamp.seconds * 1000) : new Date(l.timestamp)
+                    }));
                     const restoredEvents = events.map((e: any) => ({
                         id: 'cal-' + e.id,
                         type: 'digital',
                         title: e.summary,
-                        timestamp: new Date(e.startDate),
+                        timestamp: e.startDate?.seconds ? new Date(e.startDate.seconds * 1000) : new Date(e.startDate),
                         eventCount: 1
                     }));
 

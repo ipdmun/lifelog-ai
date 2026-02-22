@@ -110,8 +110,11 @@ export default function DashboardPage() {
         setRecentLogs(updatedLogs);
         if (user) {
             const userDocRef = doc(db, "users", user.uid);
-            // Updating all logs arrays. A safer way is fetching but for MVP overwriting logs is okay if synced
-            setDoc(userDocRef, { logs: updatedLogs }, { merge: true }).catch(err => console.error(err));
+            const analogLogsToSave = updatedLogs.filter(l => l.type === 'analog').map(l => ({
+                ...l,
+                timestamp: l.timestamp instanceof Date ? l.timestamp.toISOString() : l.timestamp
+            }));
+            setDoc(userDocRef, { logs: analogLogsToSave }, { merge: true }).catch(err => console.error("Firestore merge error:", err));
         } else {
             const savedLogs = localStorage.getItem("dashboardLogs");
             if (savedLogs) {
@@ -184,8 +187,14 @@ export default function DashboardPage() {
                     const logs = data.logs || [];
                     const events = data.events || [];
 
-                    const restoredLogs = logs.map((l: any) => ({ ...l, timestamp: new Date(l.timestamp) }));
-                    const restoredEvents = events.map((e: any) => ({ ...e, startDate: new Date(e.startDate) }));
+                    const restoredLogs = logs.map((l: any) => ({
+                        ...l,
+                        timestamp: l.timestamp?.seconds ? new Date(l.timestamp.seconds * 1000) : new Date(l.timestamp)
+                    }));
+                    const restoredEvents = events.map((e: any) => ({
+                        ...e,
+                        startDate: e.startDate?.seconds ? new Date(e.startDate.seconds * 1000) : new Date(e.startDate)
+                    }));
 
                     updateState(restoredLogs, restoredEvents);
                 } else {

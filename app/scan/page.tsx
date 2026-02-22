@@ -197,9 +197,10 @@ export default function ScanPage() {
             for (const device of videoDevices) {
                 const label = device.label.toLowerCase();
                 // Identify back camera
-                if (label.includes('back') || label.includes('environment')) {
-                    // Filter out ultrawide logic
-                    if (!label.includes('ultrawide') && !label.includes('ultra wide') && !label.includes('macro') && !label.includes('0.5x')) {
+                if (label.includes('back') || label.includes('environment') || label.includes('후면')) {
+                    // Filter out ultrawide logic - being very careful about Korean translations
+                    // "초광각" is Ultrawide, "울트라" is Ultra, "0.5x". Don't block "광각" alone as it often means the standard main wide lens on iOS/Android.
+                    if (!label.includes('ultrawide') && !label.includes('ultra wide') && !label.includes('macro') && !label.includes('0.5x') && !label.includes('초광각') && !label.includes('울트라') && !label.includes('텔레포토') && !label.includes('망원')) {
                         bestDeviceId = device.deviceId;
                         foundStandard = true;
                         break;
@@ -215,18 +216,18 @@ export default function ScanPage() {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         deviceId: { exact: bestDeviceId },
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        ...({ focusMode: "continuous" } as any)
+                        width: { ideal: 1920, max: 2560 },
+                        height: { ideal: 1080, max: 1440 },
+                        advanced: [{ focusMode: "continuous" }] as any
                     }
                 });
             } else {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
-                        facingMode: 'environment',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        ...({ focusMode: "continuous" } as any)
+                        facingMode: 'environment', // Fallback to whatever environment is
+                        width: { ideal: 1920, max: 2560 },
+                        height: { ideal: 1080, max: 1440 },
+                        advanced: [{ focusMode: "continuous" }] as any
                     }
                 });
             }
@@ -262,8 +263,10 @@ export default function ScanPage() {
         const track = cameraStreamRef.current.getVideoTracks()[0];
         if (!track) return;
 
-        const capabilities = track.getCapabilities() as any;
-        if (!capabilities.focusMode) return;
+        const capabilities = track.getCapabilities && track.getCapabilities() as any;
+        if (!capabilities || !capabilities.focusMode) {
+            console.warn("Manual focus strictly not supported by browser/device");
+        }
 
         const rect = videoRef.current.getBoundingClientRect();
         let clientX, clientY;
@@ -939,18 +942,50 @@ export default function ScanPage() {
 
                             {viewMode === 'digital' && (
                                 <div className="bg-[var(--color-neutral-700)] p-6 rounded-xl border border-[var(--color-neutral-600)] animate-fade-in">
-                                    <p className="text-base text-[var(--color-neutral-200)] italic mb-4 leading-relaxed">
-                                        "{result.summary}"
-                                    </p>
+                                    <textarea
+                                        className="text-base text-[var(--color-neutral-200)] italic mb-4 leading-relaxed bg-transparent border border-transparent hover:border-[var(--color-neutral-600)] focus:border-[var(--color-primary-500)] focus:bg-[var(--color-neutral-800)] rounded-md w-full resize-none outline-none py-1 px-2 transition-all"
+                                        value={result.summary}
+                                        onChange={(e) => setResult({ ...result, summary: e.target.value })}
+                                        rows={2}
+                                    />
                                     <div className="flex gap-2 mb-6 flex-wrap">
-                                        {result.tags.map((tag) => <Badge key={tag} variant="info" size="md">#{tag}</Badge>)}
+                                        {result.tags.map((tag: string, i: number) => (
+                                            <div key={i} className="flex items-center bg-[var(--color-info-50)]/10 text-[var(--color-info-300)] border border-[var(--color-info-500)]/30 rounded-full px-2 py-0.5">
+                                                <span className="mr-1">#</span>
+                                                <input
+                                                    className="bg-transparent outline-none w-20 text-sm focus:w-auto transition-all"
+                                                    value={tag}
+                                                    onChange={(e) => {
+                                                        const newTags = [...result.tags];
+                                                        newTags[i] = e.target.value;
+                                                        setResult({ ...result, tags: newTags });
+                                                    }}
+                                                />
+                                            </div>
+                                        ))}
                                     </div>
                                     <div className="space-y-3">
                                         <h3 className="text-sm font-semibold text-[var(--color-neutral-400)] uppercase tracking-wider">Detected Events</h3>
-                                        {result.events.map((event, index) => (
-                                            <div key={index} className="flex justify-between items-center text-sm pb-3 border-b border-[var(--color-neutral-600)] last:border-0 last:pb-0">
-                                                <span className="text-[var(--color-neutral-400)]">{event.time}</span>
-                                                <span className="font-medium text-[var(--color-neutral-50)]">{event.title}</span>
+                                        {result.events.map((event: any, index: number) => (
+                                            <div key={index} className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-[var(--color-neutral-600)] last:border-0 last:pb-0">
+                                                <input
+                                                    className="w-full sm:w-1/3 bg-transparent text-[var(--color-neutral-400)] text-sm border border-transparent hover:border-[var(--color-neutral-600)] focus:border-[var(--color-primary-500)] focus:bg-[var(--color-neutral-800)] rounded px-1 outline-none transition-all"
+                                                    value={event.time}
+                                                    onChange={(e) => {
+                                                        const newEvts = [...result.events];
+                                                        newEvts[index] = { ...newEvts[index], time: e.target.value };
+                                                        setResult({ ...result, events: newEvts });
+                                                    }}
+                                                />
+                                                <input
+                                                    className="w-full flex-1 bg-transparent font-medium text-[var(--color-neutral-50)] text-sm sm:text-right border border-transparent hover:border-[var(--color-neutral-600)] focus:border-[var(--color-primary-500)] focus:bg-[var(--color-neutral-800)] rounded px-1 outline-none transition-all"
+                                                    value={event.title}
+                                                    onChange={(e) => {
+                                                        const newEvts = [...result.events];
+                                                        newEvts[index] = { ...newEvts[index], title: e.target.value };
+                                                        setResult({ ...result, events: newEvts });
+                                                    }}
+                                                />
                                             </div>
                                         ))}
                                     </div>
