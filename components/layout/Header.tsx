@@ -241,7 +241,10 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="space-y-3 pt-6 border-t border-[var(--color-neutral-200)]">
+              <div className="space-y-4 pt-6 border-t border-[var(--color-neutral-200)]">
+                <div className="flex justify-start px-2">
+                  <LanguageSwitcher />
+                </div>
                 {secondaryAction && (
                   <Link
                     href={secondaryAction.href}

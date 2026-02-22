@@ -509,36 +509,43 @@ export default function ScanPage() {
                         {scanStage === 'cropping' && (
                             <div className="absolute inset-0 z-30">
                                 <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
+                                    {/* Thin continuous line connecting the 4 points */}
+                                    <polygon
+                                        points={cropPoints.map(p => `${p.x}%,${p.y}%`).join(' ')}
+                                        fill="transparent"
+                                        stroke="rgba(255, 255, 255, 0.8)"
+                                        strokeWidth="2"
+                                        strokeDasharray="4 4" // Makes it look lighter/dashed if preferred, remove if solid line is better
+                                    />
                                     <polygon
                                         points={cropPoints.map(p => `${p.x}%,${p.y}%`).join(' ')}
                                         fill="rgba(255, 255, 255, 0.1)"
-                                        stroke="white"
-                                        strokeWidth="2"
+                                        stroke="transparent"
                                     />
 
-                                    {/* Draw lines that can be grabbed (thicker transparent overlays) / mid-point handles */}
+                                    {/* Edges with Handles */}
                                     {cropPoints.map((p, i) => {
                                         const nextP = cropPoints[(i + 1) % 4];
                                         const midX = (p.x + nextP.x) / 2;
                                         const midY = (p.y + nextP.y) / 2;
                                         return (
                                             <g key={`edge-${i}`}>
-                                                {/* Thick invisible line for easy grab */}
+                                                {/* Thick invisible interaction line */}
                                                 <line
                                                     x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
-                                                    stroke="transparent" strokeWidth="30"
+                                                    stroke="transparent" strokeWidth="40"
                                                     className="cursor-move pointer-events-auto touch-none"
                                                     onPointerDown={(e) => { e.preventDefault(); setActiveElement(`e${i}`); e.currentTarget.setPointerCapture(e.pointerId); }}
                                                     onPointerUp={pointerUpHandler} onPointerCancel={pointerUpHandler}
                                                 />
-                                                {/* Visual handle at midpoint */}
+                                                {/* Visual Handle - The White Bar */}
                                                 <rect
-                                                    x={`${midX}%`} y={`${midY}%`} width="24" height="6" rx="3"
+                                                    x={`${midX}%`} y={`${midY}%`} width="36" height="6" rx="3"
                                                     fill="white"
-                                                    stroke="black" strokeWidth="1"
-                                                    className="pointer-events-none"
+                                                    stroke="rgba(0,0,0,0.3)" strokeWidth="1"
+                                                    className="pointer-events-none drop-shadow-md"
                                                     style={{
-                                                        transform: `translate(-12px, -3px) rotate(${Math.atan2(nextP.y - p.y, nextP.x - p.x) * 180 / Math.PI}deg)`,
+                                                        transform: `translate(-18px, -3px) rotate(${Math.atan2(nextP.y - p.y, nextP.x - p.x) * 180 / Math.PI}deg)`,
                                                         transformOrigin: `${midX}% ${midY}%`
                                                     }}
                                                 />
@@ -552,7 +559,7 @@ export default function ScanPage() {
                                             key={i}
                                             cx={`${p.x}%`}
                                             cy={`${p.y}%`}
-                                            r="24"
+                                            r="32"
                                             fill="transparent"
                                             className="cursor-pointer pointer-events-auto touch-none"
                                             onPointerDown={(e) => {
@@ -570,11 +577,11 @@ export default function ScanPage() {
                                             key={`vis-${i}`}
                                             cx={`${p.x}%`}
                                             cy={`${p.y}%`}
-                                            r="8"
+                                            r="10"
                                             fill="white"
-                                            stroke="var(--color-primary-500)"
-                                            strokeWidth="3"
-                                            className="pointer-events-none"
+                                            stroke="rgba(0,0,0,0.3)"
+                                            strokeWidth="1"
+                                            className="pointer-events-none drop-shadow-md"
                                         />
                                     ))}
                                 </svg>
@@ -615,11 +622,11 @@ export default function ScanPage() {
 
                         {/* External Control Bar to prevent overlap */}
                         {scanStage === 'cropping' && (
-                            <div className="mt-8 w-full max-w-2xl flex justify-between gap-4 pointer-events-auto px-4 sm:px-0">
-                                <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-white/5 text-white hover:bg-white/10 backdrop-blur-md border border-white/10 py-5 text-base">
+                            <div className="absolute bottom-8 left-0 right-0 px-6 sm:max-w-2xl sm:mx-auto flex justify-between gap-4 pointer-events-auto z-50">
+                                <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-black/60 text-white hover:bg-black/80 backdrop-blur-md border border-white/20 py-6 text-lg rounded-2xl shadow-xl font-semibold">
                                     {t('btnDiscard')}
                                 </Button>
-                                <Button onClick={confirmCrop} variant="primary" className="flex-1 py-5 shadow-lg shadow-primary-500/20 text-base">
+                                <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-xl shadow-[var(--color-primary-500)]/40 text-lg rounded-2xl font-bold border border-white/10">
                                     {t('btnConfirmCrop')}
                                 </Button>
                             </div>
