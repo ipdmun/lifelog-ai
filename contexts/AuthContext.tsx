@@ -5,7 +5,10 @@ import {
     onAuthStateChanged,
     User,
     signInAnonymously,
-    signOut as firebaseSignOut
+    signOut as firebaseSignOut,
+    GoogleAuthProvider,
+    signInWithPopup,
+    linkWithPopup
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 
@@ -13,6 +16,7 @@ interface AuthContextType {
     user: User | null;
     loading: boolean;
     loginAnonymously: () => Promise<void>;
+    loginWithGoogle: () => Promise<any>;
     logout: () => Promise<void>;
 }
 
@@ -47,8 +51,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
+    const loginWithGoogle = async () => {
+        try {
+            const provider = new GoogleAuthProvider();
+            provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+            // Force select account to guarantee we get a fresh token with scopes if needed
+            provider.setCustomParameters({
+                prompt: 'select_account'
+            });
+
+            if (auth.currentUser && auth.currentUser.isAnonymous) {
+                // Link anonymous account with Google
+                const credential = await linkWithPopup(auth.currentUser, provider);
+                return credential;
+            } else {
+                // Initial login with Google
+                const credential = await signInWithPopup(auth, provider);
+                return credential;
+            }
+        } catch (error) {
+            console.error("Error signing in with Google:", error);
+            throw error;
+        }
+    };
+
     return (
-        <AuthContext.Provider value={{ user, loading, loginAnonymously, logout }}>
+        <AuthContext.Provider value={{ user, loading, loginAnonymously, loginWithGoogle, logout }}>
             {children}
         </AuthContext.Provider>
     );

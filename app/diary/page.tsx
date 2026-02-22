@@ -10,12 +10,13 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { BookOpen, Plus, X } from "lucide-react";
+import { BookOpen, Plus, X, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { GoogleAuthProvider } from "firebase/auth";
 
 export default function DiaryPage() {
     const { t } = useLanguage();
-    const { user } = useAuth();
+    const { user, loginWithGoogle } = useAuth();
     const [allLogs, setAllLogs] = useState<LogItem[]>([]);
 
     // Modal state
@@ -26,6 +27,85 @@ export default function DiaryPage() {
     const [isAddingEvent, setIsAddingEvent] = useState(false);
     const [newEventTitle, setNewEventTitle] = useState("");
     const [newEventTime, setNewEventTime] = useState("");
+
+    const [isSyncing, setIsSyncing] = useState(false);
+
+    const syncGoogleCalendar = async () => {
+        try {
+            setIsSyncing(true);
+            const credential = await loginWithGoogle();
+            const token = GoogleAuthProvider.credentialFromResult(credential)?.accessToken;
+            if (!token) throw new Error("No access token acquired from Google");
+
+            const timeMin = new Date();
+            timeMin.setMonth(timeMin.getMonth() - 6);
+
+            const timeMax = new Date();
+            timeMax.setMonth(timeMax.getMonth() + 6);
+
+            const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin.toISOString()}&timeMax=${timeMax.toISOString()}&singleEvents=true&orderBy=startTime`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            const data = await res.json();
+
+            if (data.items) {
+                const newEvents = data.items.map((e: any) => {
+                    const d = e.start?.dateTime || e.start?.date;
+                    const dEnd = e.end?.dateTime || e.end?.date || d;
+                    return {
+                        id: `gcal-${e.id}`,
+                        summary: e.summary || "Google Calendar Event",
+                        description: e.description || '',
+                        startDate: new Date(d).toISOString(),
+                        endDate: new Date(dEnd).toISOString()
+                    }
+                });
+
+                if (user) {
+                    const userDocRef = doc(db, "users", user.uid);
+                    const docSnap = await getDoc(userDocRef);
+                    let existing = [];
+                    if (docSnap.exists()) {
+                        existing = docSnap.data().events || [];
+                    }
+
+                    const existingMap = new Map();
+                    existing.forEach((ex: any) => existingMap.set(ex.id, ex));
+                    newEvents.forEach((ne: any) => existingMap.set(ne.id, ne));
+
+                    await setDoc(userDocRef, { events: Array.from(existingMap.values()) }, { merge: true });
+                } else {
+                    const oldEventsStr = localStorage.getItem("allEvents");
+                    const existing = oldEventsStr ? JSON.parse(oldEventsStr) : [];
+                    const existingMap = new Map();
+                    existing.forEach((ex: any) => existingMap.set(ex.id, ex));
+                    newEvents.forEach((ne: any) => existingMap.set(ne.id, ne));
+                    localStorage.setItem("allEvents", JSON.stringify(Array.from(existingMap.values())));
+
+                    // Optimistic update for guest mode
+                    setAllLogs(prev => {
+                        const newEvLogs = newEvents.map((e: any) => ({
+                            id: 'cal-' + e.id,
+                            type: 'digital',
+                            title: e.summary,
+                            timestamp: new Date(e.startDate),
+                            eventCount: 1
+                        }));
+                        const merged = [...prev.filter(l => !l.id.startsWith('cal-gcal-')), ...newEvLogs];
+                        merged.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+                        return merged;
+                    });
+                    window.dispatchEvent(new Event('storage'));
+                }
+                alert("구글 캘린더가 성공적으로 동기화되었습니다! (Google Calendar Synced)");
+            }
+        } catch (error) {
+            console.error("Calendar sync error:", error);
+            alert("구글 캘린더 연동에 실패했습니다. (Failed to sync Calendar)");
+        } finally {
+            setIsSyncing(false);
+        }
+    };
 
     const handleSaveNewEvent = async () => {
         if (!newEventTitle.trim() || !newEventTime.trim()) return;
@@ -234,7 +314,7 @@ export default function DiaryPage() {
             <Header />
             <main className="flex-1 pt-24 pb-16 px-4 sm:px-6 lg:px-8 bg-[var(--color-neutral-50)]">
                 <div className="max-w-6xl mx-auto space-y-8">
-                    <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-[var(--color-neutral-200)] pb-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-neutral-200)] pb-6">
                         <div>
                             <h1 className="text-3xl sm:text-4xl font-bold text-[var(--color-neutral-900)] mb-2 flex items-center gap-3">
                                 <BookOpen size={32} className="text-[var(--color-primary-600)]" />
@@ -244,6 +324,15 @@ export default function DiaryPage() {
                                 A combined view of all your digital meetings and analog notes.
                             </p>
                         </div>
+                        <Button
+                            onClick={syncGoogleCalendar}
+                            disabled={isSyncing}
+                            variant="primary"
+                            className="bg-blue-600 hover:bg-blue-700 shadow-lg text-white font-bold"
+                        >
+                            <RefreshCw size={18} className={cn("mr-2", isSyncing && "animate-spin")} />
+                            {isSyncing ? "동기화 중..." : "Sync Google Calendar"}
+                        </Button>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
