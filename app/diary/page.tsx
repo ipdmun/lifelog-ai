@@ -10,7 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { BookOpen } from "lucide-react";
+import { BookOpen, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function DiaryPage() {
@@ -21,6 +21,57 @@ export default function DiaryPage() {
     // Modal state
     const [selectedLog, setSelectedLog] = useState<LogItem | null>(null);
     const [editLogData, setEditLogData] = useState<LogItem | null>(null);
+
+    // Manual Event Add State
+    const [isAddingEvent, setIsAddingEvent] = useState(false);
+    const [newEventTitle, setNewEventTitle] = useState("");
+    const [newEventTime, setNewEventTime] = useState("");
+
+    const handleSaveNewEvent = async () => {
+        if (!newEventTitle.trim() || !newEventTime.trim()) return;
+
+        const [hours, minutes] = newEventTime.split(':').map(Number);
+        const eventDate = new Date(selectedDate);
+        eventDate.setHours(hours, minutes, 0, 0);
+
+        const newEvent = {
+            id: Date.now().toString(),
+            summary: newEventTitle,
+            startDate: eventDate.toISOString(),
+            endDate: eventDate.toISOString()
+        };
+
+        if (user) {
+            const userDocRef = doc(db, "users", user.uid);
+            const docSnap = await getDoc(userDocRef);
+            let existingEvents = [];
+            if (docSnap.exists()) {
+                existingEvents = docSnap.data().events || [];
+            }
+            await setDoc(userDocRef, { events: [...existingEvents, newEvent] }, { merge: true });
+        } else {
+            const oldEventsStr = localStorage.getItem("allEvents");
+            const existingEvents = oldEventsStr ? JSON.parse(oldEventsStr) : [];
+            localStorage.setItem("allEvents", JSON.stringify([...existingEvents, newEvent]));
+            // Predict optimistic update for local user
+            setAllLogs(prev => {
+                const added: LogItem = {
+                    id: 'cal-' + newEvent.id,
+                    type: 'digital',
+                    title: newEvent.summary,
+                    timestamp: new Date(newEvent.startDate),
+                    eventCount: 1
+                };
+                const newArr = [...prev, added];
+                newArr.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+                return newArr;
+            });
+        }
+
+        setIsAddingEvent(false);
+        setNewEventTitle("");
+        setNewEventTime("09:00");
+    };
 
     const handleSaveLogEdit = async () => {
         if (!selectedLog || !editLogData) return;
@@ -247,9 +298,45 @@ export default function DiaryPage() {
                         {/* Timeline Panel */}
                         <div className="lg:col-span-2">
                             <div className="bg-white rounded-2xl p-6 border border-[var(--color-neutral-200)] shadow-sm min-h-[500px]">
-                                <h3 className="text-lg font-bold text-[var(--color-neutral-900)] mb-6 pb-2 border-b border-[var(--color-neutral-100)] flex items-center gap-2">
-                                    Logs for {selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
-                                </h3>
+                                <div className="mb-6 pb-2 border-b border-[var(--color-neutral-100)] flex items-center justify-between gap-4 flex-wrap">
+                                    <h3 className="text-lg font-bold text-[var(--color-neutral-900)] flex items-center gap-2">
+                                        Logs for {selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                                    </h3>
+                                    <Button onClick={() => setIsAddingEvent(true)} size="sm" variant="outline" className="text-[var(--color-primary-600)] border-[var(--color-primary-200)] hover:bg-[var(--color-primary-50)]">
+                                        <Plus size={16} className="mr-1" />
+                                        Add Event
+                                    </Button>
+                                </div>
+
+                                {isAddingEvent && (
+                                    <div className="mb-6 p-4 rounded-xl border border-[var(--color-primary-200)] bg-[var(--color-primary-50)]/30 space-y-3 animate-in fade-in slide-in-from-top-4">
+                                        <div className="flex items-center justify-between">
+                                            <h4 className="text-sm font-bold text-[var(--color-primary-800)]">New Event</h4>
+                                            <button onClick={() => setIsAddingEvent(false)} className="text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-600)]">
+                                                <X size={16} />
+                                            </button>
+                                        </div>
+                                        <div className="flex gap-2 text-sm">
+                                            <input
+                                                type="time"
+                                                className="px-3 py-2 border border-[var(--color-neutral-200)] rounded-md outline-none focus:border-[var(--color-primary-400)] bg-white"
+                                                value={newEventTime}
+                                                onChange={e => setNewEventTime(e.target.value)}
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Event Title..."
+                                                className="flex-1 px-3 py-2 border border-[var(--color-neutral-200)] rounded-md outline-none focus:border-[var(--color-primary-400)] bg-white"
+                                                value={newEventTitle}
+                                                onChange={e => setNewEventTitle(e.target.value)}
+                                                onKeyDown={e => e.key === 'Enter' && handleSaveNewEvent()}
+                                            />
+                                            <Button onClick={handleSaveNewEvent} size="sm" variant="primary">
+                                                Save
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
 
                                 {filteredLogs.length > 0 ? (
                                     <LogTimeline logs={filteredLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }} />
