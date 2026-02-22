@@ -9,8 +9,8 @@ import { Badge } from "@/components/ui/Badge";
 import { useAnnounce, useKeyPress } from "@/lib/hooks";
 import { useLanguage } from "@/contexts/LanguageContext";
 import Script from "next/script";
-import Tesseract from "tesseract.js";
 import { useAuth } from "@/contexts/AuthContext";
+import { analyzeImageWithAI } from "@/app/actions/analyzeImage";
 import { useScanConfig } from "@/contexts/ScanContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, updateDoc, arrayUnion } from "firebase/firestore";
@@ -383,44 +383,28 @@ export default function ScanPage() {
             src.delete(); warpedSrc.delete();
 
             setScanStage('analyzing');
-            announce('AI (Tesseract) analyzing handwriting...', 'polite');
+            announce('AI is analyzing the document...', 'polite');
 
-            // Phase 3: OCR
-            Tesseract.recognize(
-                finalImageUrl,
-                locale === 'ko' ? 'kor' : locale === 'jp' ? 'jpn' : 'eng',
-                { logger: m => console.log(m) }
-            ).then(({ data: { text } }) => {
+            // Phase 3: Advanced AI Analysis (Gemini)
+            const aiResult = await analyzeImageWithAI(finalImageUrl, locale);
+
+            if (aiResult.success && aiResult.data) {
                 setScanStage('complete');
                 setViewMode('digital');
-
-                const lines = text.split('\n').filter(l => l.trim().length > 3);
-
-                setResult({
-                    summary: lines.length > 0 ? "Detected Text: " + lines.slice(0, 3).join(' ') + "..." : "No significant text detected.",
-                    sentiment: "Neutral",
-                    events: lines.length > 1 ? [
-                        { time: "Found", title: lines[0] },
-                        { time: "Matched", title: lines[1] || "More content" }
-                    ] : [],
-                    tags: ["OCR", locale]
-                });
-
+                setResult(aiResult.data);
                 announce('Analysis complete', 'polite');
-            }).catch(err => {
-                console.error(err);
-                setScanStage('complete');
-                setResult({
-                    summary: "OCR Extracted failed. Displaying fallback analysis.",
-                    sentiment: "Unknown",
-                    events: [],
-                    tags: ["Error"]
-                });
-            });
-
+            } else {
+                throw new Error(aiResult.error || "AI failed to process the image");
+            }
         } catch (e) {
-            console.error("CV/OCR Error", e);
+            console.error("Analysis Error", e);
             setScanStage('complete');
+            setResult({
+                summary: "AI analysis failed over OCR. Please check API keys or try again.",
+                sentiment: "Unknown",
+                events: [],
+                tags: ["Error"]
+            });
         }
     };
 
