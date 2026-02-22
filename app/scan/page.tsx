@@ -364,6 +364,7 @@ export default function ScanPage() {
             cv.imshow(canvas, warpedSrc);
             const finalImageUrl = canvas.toDataURL('image/jpeg', 0.9);
             setTransformedImage(finalImageUrl);
+            setImageAspect(maxWidth / maxHeight);
 
             // Cleanup CV vars
             M.delete(); srcCoords.delete(); dstCoords.delete();
