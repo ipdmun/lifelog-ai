@@ -100,11 +100,50 @@ export default function DiaryPage() {
         }
     }, [user]);
 
+    const [currentMonth, setCurrentMonth] = useState(new Date());
+    const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+
+    const handlePrevMonth = () => {
+        setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+    };
+
+    const handleNextMonth = () => {
+        setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+    };
+
+    // Calendar Calculations
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const firstDayOfMonth = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    const calendarDays = [];
+    for (let i = 0; i < firstDayOfMonth; i++) {
+        calendarDays.push(null);
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+        calendarDays.push(new Date(year, month, i));
+    }
+
+    const filteredLogs = allLogs.filter(log =>
+        log.timestamp.getFullYear() === selectedDate.getFullYear() &&
+        log.timestamp.getMonth() === selectedDate.getMonth() &&
+        log.timestamp.getDate() === selectedDate.getDate()
+    );
+
+    const checkHasLogs = (date: Date) => {
+        return allLogs.some(log =>
+            log.timestamp.getFullYear() === date.getFullYear() &&
+            log.timestamp.getMonth() === date.getMonth() &&
+            log.timestamp.getDate() === date.getDate()
+        );
+    };
+
     return (
         <div className="min-h-screen flex flex-col">
             <Header />
             <main className="flex-1 pt-24 pb-16 px-4 sm:px-6 lg:px-8 bg-[var(--color-neutral-50)]">
-                <div className="max-w-4xl mx-auto space-y-8">
+                <div className="max-w-6xl mx-auto space-y-8">
                     <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-[var(--color-neutral-200)] pb-6">
                         <div>
                             <h1 className="text-3xl sm:text-4xl font-bold text-[var(--color-neutral-900)] mb-2 flex items-center gap-3">
@@ -117,14 +156,81 @@ export default function DiaryPage() {
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl p-6 border border-[var(--color-neutral-200)] shadow-sm min-h-[500px]">
-                        {allLogs.length > 0 ? (
-                            <LogTimeline logs={allLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }} />
-                        ) : (
-                            <div className="flex items-center justify-center h-[400px] text-[var(--color-neutral-500)] italic">
-                                No diary entries found yet. Upload calendar or scan notes to get started!
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* Calendar Panel */}
+                        <div className="lg:col-span-1">
+                            <Card className="p-4 sm:p-6 bg-white shadow-sm border-[var(--color-neutral-200)]">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-xl font-bold text-[var(--color-neutral-900)]">
+                                        {currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                                    </h2>
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={handlePrevMonth} className="p-2 hover:bg-[var(--color-neutral-100)] rounded-full transition-colors">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+                                        </button>
+                                        <button onClick={handleNextMonth} className="p-2 hover:bg-[var(--color-neutral-100)] rounded-full transition-colors">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-7 gap-1 mb-2 text-center text-xs font-semibold text-[var(--color-neutral-500)]">
+                                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                                        <div key={day} className="py-2">{day}</div>
+                                    ))}
+                                </div>
+                                <div className="grid grid-cols-7 gap-1">
+                                    {calendarDays.map((date, idx) => {
+                                        if (!date) return <div key={`empty-${idx}`} className="h-10 sm:h-12"></div>;
+
+                                        const isSelected = date.toDateString() === selectedDate.toDateString();
+                                        const isToday = date.toDateString() === new Date().toDateString();
+                                        const hasActivity = checkHasLogs(date);
+
+                                        return (
+                                            <button
+                                                key={date.toISOString()}
+                                                onClick={() => setSelectedDate(date)}
+                                                className={cn(
+                                                    "relative h-10 sm:h-12 w-full flex items-center justify-center rounded-lg text-sm transition-all font-medium",
+                                                    isSelected ? "bg-[var(--color-primary-600)] text-white font-bold shadow-md" :
+                                                        isToday ? "bg-[var(--color-primary-50)] text-[var(--color-primary-700)] hover:bg-[var(--color-primary-100)]" :
+                                                            "text-[var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]"
+                                                )}
+                                            >
+                                                {date.getDate()}
+                                                {hasActivity && (
+                                                    <span className={cn(
+                                                        "absolute bottom-1 w-1.5 h-1.5 rounded-full",
+                                                        isSelected ? "bg-white" : "bg-[var(--color-primary-500)]"
+                                                    )}></span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </Card>
+                        </div>
+
+                        {/* Timeline Panel */}
+                        <div className="lg:col-span-2">
+                            <div className="bg-white rounded-2xl p-6 border border-[var(--color-neutral-200)] shadow-sm min-h-[500px]">
+                                <h3 className="text-lg font-bold text-[var(--color-neutral-900)] mb-6 pb-2 border-b border-[var(--color-neutral-100)] flex items-center gap-2">
+                                    Logs for {selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                                </h3>
+
+                                {filteredLogs.length > 0 ? (
+                                    <LogTimeline logs={filteredLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }} />
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center h-[300px] text-[var(--color-neutral-500)] italic space-y-4">
+                                        <div className="w-16 h-16 bg-[var(--color-neutral-100)] rounded-full flex items-center justify-center text-[var(--color-neutral-400)]">
+                                            <BookOpen size={24} />
+                                        </div>
+                                        <p>No diary entries for this date.</p>
+                                    </div>
+                                )}
                             </div>
-                        )}
+                        </div>
                     </div>
                 </div>
             </main>
