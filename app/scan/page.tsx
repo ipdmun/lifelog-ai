@@ -43,97 +43,185 @@ export default function ScanPage() {
     const [cvReady, setCvReady] = useState(false);
     const [imageAspect, setImageAspect] = useState<number | null>(null);
 
-    const { capturedImage, triggerNativeCamera } = useScanConfig();
+    const { capturedImage } = useScanConfig();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const announce = useAnnounce();
 
-    useEffect(() => {
-        if (scanStage === 'idle' && capturedImage) {
-            setImage(capturedImage);
+    // WebRTC Live camera states
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const cameraStreamRef = useRef<MediaStream | null>(null);
+    const requestRef = useRef<number | null>(null);
+    const [livePoints, setLivePoints] = useState<{ x: number, y: number }[] | null>(null);
 
-            const runDetection = async () => {
-                if (!cvReady) {
-                    setCropPoints([
-                        { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
-                    ]);
-                    setScanStage('cropping');
-                    return;
+    const stopCamera = useCallback(() => {
+        if (cameraStreamRef.current) {
+            cameraStreamRef.current.getTracks().forEach(track => track.stop());
+            cameraStreamRef.current = null;
+        }
+        if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    }, []);
+
+    const detectDocument = useCallback((cv: any, srcCanvas: HTMLCanvasElement): { x: number, y: number }[] | null => {
+        try {
+            const src = cv.imread(srcCanvas);
+            const dst = new cv.Mat();
+            cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
+            cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+            cv.Canny(dst, dst, 75, 200, 3, false);
+
+            const contours = new cv.MatVector();
+            const hierarchy = new cv.Mat();
+            cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+            let maxArea = 0;
+            let approx = new cv.Mat();
+            let found = false;
+
+            for (let i = 0; i < contours.size(); ++i) {
+                const contour = contours.get(i);
+                const area = cv.contourArea(contour, false);
+                if (area > (srcCanvas.width * srcCanvas.height * 0.05) && area > maxArea) {
+                    const peri = cv.arcLength(contour, true);
+                    const tmpApprox = new cv.Mat();
+                    cv.approxPolyDP(contour, tmpApprox, 0.02 * peri, true);
+                    if (tmpApprox.rows === 4) {
+                        maxArea = area;
+                        tmpApprox.copyTo(approx);
+                        found = true;
+                    }
+                    tmpApprox.delete();
                 }
+                contour.delete();
+            }
 
-                try {
+            let pts = null;
+            if (found) {
+                const rawPts = [];
+                for (let i = 0; i < 4; i++) {
+                    rawPts.push({ x: (approx.data32S[i * 2] / srcCanvas.width) * 100, y: (approx.data32S[i * 2 + 1] / srcCanvas.height) * 100 });
+                }
+                rawPts.sort((a: any, b: any) => a.y - b.y);
+                const top = rawPts.slice(0, 2).sort((a: any, b: any) => a.x - b.x);
+                const bottom = rawPts.slice(2, 4).sort((a: any, b: any) => a.x - b.x);
+                pts = [top[0], top[1], bottom[1], bottom[0]];
+            }
+
+            src.delete(); dst.delete(); contours.delete(); hierarchy.delete(); approx.delete();
+            return pts;
+        } catch (e) {
+            console.error(e);
+            return null;
+        }
+    }, []);
+
+    const liveDetectionLoop = useCallback(() => {
+        if (!cvReady || scanStage !== 'idle' || !videoRef.current || videoRef.current.readyState !== 4) {
+            requestRef.current = requestAnimationFrame(liveDetectionLoop);
+            return;
+        }
+
+        const video = videoRef.current;
+        const cv = (window as any).cv;
+
+        try {
+            const canvas = canvasRef.current!;
+            const scale = Math.min(640 / Math.max(video.videoWidth, video.videoHeight), 1);
+            canvas.width = video.videoWidth * scale;
+            canvas.height = video.videoHeight * scale;
+            const ctx = canvas.getContext('2d')!;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const pts = detectDocument(cv, canvas);
+            if (pts) setLivePoints(pts);
+        } catch (e) { }
+
+        requestRef.current = requestAnimationFrame(liveDetectionLoop);
+    }, [cvReady, scanStage, detectDocument]);
+
+    const startCamera = useCallback(async () => {
+        if (scanStage !== 'idle') return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                }
+            });
+            cameraStreamRef.current = stream;
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                videoRef.current.play();
+                requestRef.current = requestAnimationFrame(liveDetectionLoop);
+            }
+        } catch (err) {
+            console.error("Camera error:", err);
+            announce("Could not start camera. Check permissions.", "polite");
+        }
+    }, [scanStage, liveDetectionLoop, announce]);
+    useEffect(() => {
+        if (scanStage === 'idle') {
+            if (capturedImage) {
+                const processPreCaptured = async () => {
                     const img = new Image();
                     img.src = capturedImage;
                     await new Promise((resolve) => { img.onload = resolve; });
                     setImageAspect(img.width / img.height);
+                    setImage(capturedImage);
 
-                    const canvas = document.createElement('canvas');
-                    const scale = Math.min(1000 / Math.max(img.width, img.height), 1);
-                    canvas.width = img.width * scale;
-                    canvas.height = img.height * scale;
-                    const ctx = canvas.getContext('2d')!;
-                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    if (cvReady) {
+                        const canvas = document.createElement('canvas');
+                        const scale = Math.min(1000 / Math.max(img.width, img.height), 1);
+                        canvas.width = img.width * scale;
+                        canvas.height = img.height * scale;
+                        const ctx = canvas.getContext('2d')!;
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-                    const cv = (window as any).cv;
-                    const src = cv.imread(canvas);
-                    const dst = new cv.Mat();
-                    cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
-                    cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-                    cv.Canny(dst, dst, 75, 200, 3, false);
-
-                    const contours = new cv.MatVector();
-                    const hierarchy = new cv.Mat();
-                    cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-                    let maxArea = 0;
-                    let approx = new cv.Mat();
-                    let found = false;
-
-                    for (let i = 0; i < contours.size(); ++i) {
-                        const contour = contours.get(i);
-                        const area = cv.contourArea(contour, false);
-                        if (area > (canvas.width * canvas.height * 0.05) && area > maxArea) {
-                            const peri = cv.arcLength(contour, true);
-                            const tmpApprox = new cv.Mat();
-                            cv.approxPolyDP(contour, tmpApprox, 0.02 * peri, true);
-                            if (tmpApprox.rows === 4) {
-                                maxArea = area;
-                                tmpApprox.copyTo(approx);
-                                found = true;
-                            }
-                            tmpApprox.delete();
-                        }
-                        contour.delete();
-                    }
-
-                    if (found) {
-                        const pts = [];
-                        for (let i = 0; i < 4; i++) {
-                            pts.push({ x: (approx.data32S[i * 2] / canvas.width) * 100, y: (approx.data32S[i * 2 + 1] / canvas.height) * 100 });
-                        }
-                        pts.sort((a, b) => a.y - b.y);
-                        const top = pts.slice(0, 2).sort((a, b) => a.x - b.x);
-                        const bottom = pts.slice(2, 4).sort((a, b) => a.x - b.x);
-                        setCropPoints([top[0], top[1], bottom[1], bottom[0]]);
+                        const cv = (window as any).cv;
+                        const pts = detectDocument(cv, canvas);
+                        if (pts) setCropPoints(pts);
+                        else setCropPoints([{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }]);
                     } else {
-                        setCropPoints([
-                            { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
-                        ]);
+                        setCropPoints([{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }]);
                     }
-
-                    src.delete(); dst.delete(); contours.delete(); hierarchy.delete(); approx.delete();
-                } catch (e) {
-                    console.error("Auto crop failed:", e);
-                    setCropPoints([
-                        { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
-                    ]);
-                }
-                setScanStage('cropping');
-            };
-
-            runDetection();
+                    setScanStage('cropping');
+                };
+                processPreCaptured();
+            } else {
+                startCamera();
+            }
+        } else {
+            stopCamera();
         }
-    }, [scanStage, capturedImage, cvReady]);
+        return () => stopCamera();
+    }, [scanStage, capturedImage, cvReady, startCamera, stopCamera, detectDocument]);
+
+    const capturePhoto = () => {
+        if (!videoRef.current) return;
+        const video = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+        setImageAspect(video.videoWidth / video.videoHeight);
+        setImage(dataUrl);
+
+        if (livePoints) {
+            setCropPoints(livePoints);
+        } else {
+            setCropPoints([
+                { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
+            ]);
+        }
+
+        stopCamera();
+        announce('Photo captured with smart crop layout.', 'polite');
+        setScanStage('cropping');
+    };
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -146,9 +234,22 @@ export default function ScanPage() {
                 img.src = imgSource;
                 img.onload = () => {
                     setImageAspect(img.width / img.height);
-                    setCropPoints([
-                        { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
-                    ]);
+
+                    if (cvReady) {
+                        const canvas = document.createElement('canvas');
+                        const scale = Math.min(1000 / Math.max(img.width, img.height), 1);
+                        canvas.width = img.width * scale;
+                        canvas.height = img.height * scale;
+                        const ctx = canvas.getContext('2d')!;
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                        const cv = (window as any).cv;
+                        const pts = detectDocument(cv, canvas);
+                        if (pts) setCropPoints(pts);
+                        else setCropPoints([{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }]);
+                    } else {
+                        setCropPoints([{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }]);
+                    }
                     setScanStage('cropping');
                 }
             };
@@ -385,19 +486,46 @@ export default function ScanPage() {
                     style={scanStage === 'idle' ? { opacity: 1 } : { opacity: 0, position: 'absolute', pointerEvents: 'none' }}
                 >
                     {scanStage === 'idle' && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-neutral-400)] text-center p-6 bg-[var(--color-neutral-800)]">
-                            <Camera size={64} className="mb-6 opacity-30 animate-pulse text-[var(--color-primary-500)]" />
-                            <h2 className="text-2xl font-bold text-white mb-3 flex items-center gap-2">
-                                <Sparkles size={24} className="text-amber-400" />
-                                {t('heroTitle')}
-                            </h2>
-                            <p className="text-[var(--color-neutral-300)] mb-10 max-w-sm leading-relaxed text-lg lg:text-xl">
-                                {t('demoDesc')}
-                            </p>
-                            <Button onClick={triggerNativeCamera} variant="primary" size="lg" className="px-10 py-6 text-xl rounded-full shadow-[0_8px_32px_rgba(245,158,11,0.4)]">
-                                <Camera size={24} className="mr-3" />
-                                {t('btnScan')}
-                            </Button>
+                        <div className="absolute inset-0 bg-black">
+                            <video
+                                ref={videoRef}
+                                className="w-full h-full object-cover"
+                                playsInline
+                                muted
+                                autoPlay
+                            />
+
+                            {/* Live Detection Overlay */}
+                            {livePoints && (
+                                <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none z-10 transition-all duration-75">
+                                    <polygon
+                                        points={livePoints.map((p: any) => `${p.x}%,${p.y}%`).join(' ')}
+                                        fill="rgba(59, 130, 246, 0.2)"
+                                        stroke="rgba(255, 255, 255, 0.9)"
+                                        strokeWidth="2.5"
+                                    />
+                                    {livePoints.map((p: any, i: number) => (
+                                        <circle key={i} cx={`${p.x}%`} cy={`${p.y}%`} r="6" fill="white" />
+                                    ))}
+                                </svg>
+                            )}
+
+                            <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center px-8 z-20 gap-8">
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="p-4 rounded-full bg-black/40 backdrop-blur-md text-white border border-white/20 hover:bg-black/60 transition"
+                                >
+                                    <ImageIcon size={28} />
+                                </button>
+                                <button
+                                    onClick={capturePhoto}
+                                    className="w-20 h-20 rounded-full border-[6px] border-white bg-white/20 shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-105 active:scale-95 transition-transform flex items-center justify-center p-0"
+                                >
+                                    <div className="w-[85%] h-[85%] rounded-full bg-white opacity-90"></div>
+                                    <span className="sr-only">Take photo</span>
+                                </button>
+                                <div className="w-[60px]" /> {/* Spacer for symmetry */}
+                            </div>
                         </div>
                     )}
                 </div>
