@@ -274,12 +274,17 @@ export default function DiaryPage() {
                                             <button
                                                 key={date.toISOString()}
                                                 onClick={() => setSelectedDate(date)}
+                                                onDoubleClick={() => {
+                                                    setSelectedDate(date);
+                                                    setIsAddingEvent(true);
+                                                }}
                                                 className={cn(
                                                     "relative h-10 sm:h-12 w-full flex items-center justify-center rounded-lg text-sm transition-all font-medium",
                                                     isSelected ? "bg-[var(--color-primary-600)] text-white font-bold shadow-md" :
                                                         isToday ? "bg-[var(--color-primary-50)] text-[var(--color-primary-700)] hover:bg-[var(--color-primary-100)]" :
                                                             "text-[var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]"
                                                 )}
+                                                title="Double-click to add event"
                                             >
                                                 {date.getDate()}
                                                 {hasActivity && (
