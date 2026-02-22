@@ -68,28 +68,55 @@ export default function ScanPage() {
             const dst = new cv.Mat();
             cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
             cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-            cv.Canny(dst, dst, 75, 200, 3, false);
+            // Increase threshold range slightly to catch less sharp edges and process faster
+            cv.Canny(dst, dst, 50, 150, 3, false);
 
             const contours = new cv.MatVector();
             const hierarchy = new cv.Mat();
             cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-            let maxArea = 0;
-            let approx = new cv.Mat();
+            // Calculate center of the screen to prioritize central objects
+            const centerX = srcCanvas.width / 2;
+            const centerY = srcCanvas.height / 2;
+            let bestScore = 0;
+            let bestApprox = new cv.Mat();
             let found = false;
 
             for (let i = 0; i < contours.size(); ++i) {
                 const contour = contours.get(i);
                 const area = cv.contourArea(contour, false);
-                // Lower threshold to 2% to detect smaller documents
-                if (area > (srcCanvas.width * srcCanvas.height * 0.02) && area > maxArea) {
+
+                // Extremely low tolerance to detect anything, but rely on scoring to pick the best
+                if (area > (srcCanvas.width * srcCanvas.height * 0.02)) {
                     const peri = cv.arcLength(contour, true);
                     const tmpApprox = new cv.Mat();
-                    cv.approxPolyDP(contour, tmpApprox, 0.02 * peri, true);
+                    cv.approxPolyDP(contour, tmpApprox, 0.03 * peri, true);
+
                     if (tmpApprox.rows === 4) {
-                        maxArea = area;
-                        tmpApprox.copyTo(approx);
-                        found = true;
+                        // Calculate the center of the contour bounding box
+                        let cx = 0, cy = 0;
+                        for (let j = 0; j < 4; j++) {
+                            cx += tmpApprox.data32S[j * 2];
+                            cy += tmpApprox.data32S[j * 2 + 1];
+                        }
+                        cx /= 4;
+                        cy /= 4;
+
+                        // Calculate distance from center (normalized to 0-1)
+                        const maxDist = Math.sqrt(centerX * centerX + centerY * centerY);
+                        const distFromCenter = Math.sqrt(Math.pow(cx - centerX, 2) + Math.pow(cy - centerY, 2)) / maxDist;
+
+                        // Priority scoring: Area is good, being off-center is bad
+                        // (area ratio) * (1 - distance penalty) -> closer to center wins even if slightly smaller
+                        const areaRatio = area / (srcCanvas.width * srcCanvas.height);
+                        const distancePenalty = distFromCenter * 2.0; // Penalty multiplier
+                        const score = areaRatio * Math.max(0.1, (1.0 - distancePenalty));
+
+                        if (score > bestScore) {
+                            bestScore = score;
+                            tmpApprox.copyTo(bestApprox);
+                            found = true;
+                        }
                     }
                     tmpApprox.delete();
                 }
@@ -100,7 +127,7 @@ export default function ScanPage() {
             if (found) {
                 const rawPts = [];
                 for (let i = 0; i < 4; i++) {
-                    rawPts.push({ x: (approx.data32S[i * 2] / srcCanvas.width) * 100, y: (approx.data32S[i * 2 + 1] / srcCanvas.height) * 100 });
+                    rawPts.push({ x: (bestApprox.data32S[i * 2] / srcCanvas.width) * 100, y: (bestApprox.data32S[i * 2 + 1] / srcCanvas.height) * 100 });
                 }
                 rawPts.sort((a: any, b: any) => a.y - b.y);
                 const top = rawPts.slice(0, 2).sort((a: any, b: any) => a.x - b.x);
@@ -108,7 +135,7 @@ export default function ScanPage() {
                 pts = [top[0], top[1], bottom[1], bottom[0]];
             }
 
-            src.delete(); dst.delete(); contours.delete(); hierarchy.delete(); approx.delete();
+            src.delete(); dst.delete(); contours.delete(); hierarchy.delete(); bestApprox.delete();
             return pts;
         } catch (e) {
             console.error(e);
