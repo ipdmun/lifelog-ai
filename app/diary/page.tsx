@@ -10,7 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { BookOpen, Plus, X, RefreshCw } from "lucide-react";
+import { Camera, ArrowLeft, Check, Sparkles, X, Plus, Calendar as CalendarIcon, BookOpen, Clock, ChevronLeft, ChevronRight, Activity, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GoogleAuthProvider } from "firebase/auth";
 
@@ -445,7 +445,7 @@ export default function DiaryPage() {
                                 )}
 
                                 {filteredLogs.length > 0 ? (
-                                    <LogTimeline logs={filteredLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }} />
+                                    <LogTimeline logs={filteredLogs} showHeader={false} onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }} />
                                 ) : (
                                     <div className="flex flex-col items-center justify-center h-[300px] text-[var(--color-neutral-500)] italic space-y-4">
                                         <div className="w-16 h-16 bg-[var(--color-neutral-100)] rounded-full flex items-center justify-center text-[var(--color-neutral-400)]">
@@ -456,6 +456,26 @@ export default function DiaryPage() {
                                 )}
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                {/* Global Recent Activity Section - Added so users can find recent scans regardless of the selected date */}
+                <div className="max-w-6xl mx-auto px-4 pb-20 mt-12">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-full bg-[var(--color-primary-600)] flex items-center justify-center text-white shadow-lg">
+                            <Activity size={20} />
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-bold text-[var(--color-neutral-900)]">{t('recentActivity')}</h2>
+                            <p className="text-sm text-[var(--color-neutral-500)]">All your latest scans and digital records</p>
+                        </div>
+                    </div>
+                    <div className="bg-white rounded-2xl p-1 border border-[var(--color-neutral-200)] shadow-sm">
+                        <LogTimeline
+                            logs={allLogs.slice(0, 10)}
+                            showHeader={false}
+                            onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }}
+                        />
                     </div>
                 </div>
             </main>

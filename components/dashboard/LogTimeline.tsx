@@ -20,6 +20,7 @@ export interface LogTimelineProps {
   logs: LogItem[];
   onLogClick?: (log: LogItem) => void;
   className?: string;
+  showHeader?: boolean;
 }
 
 /**
@@ -38,6 +39,7 @@ export const LogTimeline: React.FC<LogTimelineProps> = ({
   logs,
   onLogClick,
   className,
+  showHeader = true,
 }) => {
   const { t, locale } = useLanguage();
 
@@ -51,6 +53,7 @@ export const LogTimeline: React.FC<LogTimelineProps> = ({
     const hours = Math.floor(diff / (1000 * 60 * 60));
     const days = Math.floor(hours / 24);
 
+    if (diff < 0) return date.toLocaleDateString(locale === 'ko' ? 'ko-KR' : locale === 'jp' ? 'ja-JP' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     if (hours < 1) return t('justNow');
     if (hours < 24) return `${hours}${t('hAgo')}`;
     if (days < 7) return `${days}${t('dAgo')}`;
@@ -59,14 +62,16 @@ export const LogTimeline: React.FC<LogTimelineProps> = ({
 
   return (
     <Card variant="outlined" padding="none" className={className}>
-      <CardHeader padding="md">
-        <div className="flex items-center gap-2">
-          <Clock size={20} className="text-[var(--color-primary-600)]" />
-          <h3 className="text-lg font-bold text-[var(--color-neutral-900)]">
-            {t('recentActivity')}
-          </h3>
-        </div>
-      </CardHeader>
+      {showHeader && (
+        <CardHeader padding="md">
+          <div className="flex items-center gap-2">
+            <Clock size={20} className="text-[var(--color-primary-600)]" />
+            <h3 className="text-lg font-bold text-[var(--color-neutral-900)]">
+              {t('recentActivity')}
+            </h3>
+          </div>
+        </CardHeader>
+      )}
 
       <CardContent padding="none">
         {logs.length === 0 ? (
