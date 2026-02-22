@@ -53,6 +53,7 @@ export default function ScanPage() {
     const cameraStreamRef = useRef<MediaStream | null>(null);
     const requestRef = useRef<number | null>(null);
     const [livePoints, setLivePoints] = useState<{ x: number, y: number }[] | null>(null);
+    const [focusPoint, setFocusPoint] = useState<{ x: number, y: number } | null>(null);
 
     const stopCamera = useCallback(() => {
         if (cameraStreamRef.current) {
@@ -187,7 +188,8 @@ export default function ScanPage() {
                 video: {
                     facingMode: 'environment',
                     width: { ideal: 1920 },
-                    height: { ideal: 1080 }
+                    height: { ideal: 1080 },
+                    ...({ focusMode: "continuous" } as any)
                 }
             });
             cameraStreamRef.current = stream;
@@ -201,6 +203,53 @@ export default function ScanPage() {
             announce("Could not start camera. Check permissions.", "polite");
         }
     }, [scanStage, liveDetectionLoop, announce]);
+
+    const handleTapToFocus = useCallback(async (e: React.MouseEvent<HTMLVideoElement> | React.TouchEvent<HTMLVideoElement>) => {
+        if (!videoRef.current || !cameraStreamRef.current) return;
+        const track = cameraStreamRef.current.getVideoTracks()[0];
+        if (!track) return;
+
+        const capabilities = track.getCapabilities() as any;
+        if (!capabilities.focusMode) return;
+
+        const rect = videoRef.current.getBoundingClientRect();
+        let clientX, clientY;
+
+        if ('touches' in e) {
+            clientX = (e as React.TouchEvent<HTMLVideoElement>).touches[0].clientX;
+            clientY = (e as React.TouchEvent<HTMLVideoElement>).touches[0].clientY;
+        } else {
+            clientX = (e as React.MouseEvent<HTMLVideoElement>).clientX;
+            clientY = (e as React.MouseEvent<HTMLVideoElement>).clientY;
+        }
+
+        const x = clientX - rect.left;
+        const y = clientY - rect.top;
+
+        setFocusPoint({ x, y });
+        setTimeout(() => setFocusPoint(null), 1500);
+
+        try {
+            await track.applyConstraints({
+                advanced: [{
+                    focusMode: "manual",
+                    pointsOfInterest: [{ x: x / rect.width, y: y / rect.height }]
+                }]
+            } as any);
+
+            // Re-enable continuous auto focus after 2 seconds
+            setTimeout(async () => {
+                try {
+                    await track.applyConstraints({
+                        advanced: [{ focusMode: "continuous" }]
+                    } as any);
+                } catch (e) { }
+            }, 2000);
+        } catch (err) {
+            console.warn("Manual focus not supported: ", err);
+        }
+    }, []);
+
     useEffect(() => {
         if (scanStage === 'idle') {
             if (capturedImage) {
@@ -542,11 +591,24 @@ export default function ScanPage() {
                         <div className="absolute inset-0 bg-black">
                             <video
                                 ref={videoRef}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-cover cursor-pointer"
                                 playsInline
                                 muted
                                 autoPlay
+                                onClick={handleTapToFocus}
+                                onTouchStart={handleTapToFocus}
                             />
+                            {focusPoint && (
+                                <div
+                                    className="absolute w-16 h-16 border-2 border-[var(--color-primary-400)] rounded-md pointer-events-none animate-pulse z-40 transition-all duration-300"
+                                    style={{
+                                        left: focusPoint.x,
+                                        top: focusPoint.y,
+                                        transform: 'translate(-50%, -50%) scale(1.1)',
+                                        boxShadow: '0 0 10px rgba(59, 130, 246, 0.5)'
+                                    }}
+                                />
+                            )}
 
                             {/* Live Detection Overlay */}
                             {livePoints && (
