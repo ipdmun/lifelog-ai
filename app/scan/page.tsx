@@ -59,7 +59,12 @@ export default function ScanPage() {
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                    advanced: [{ focusMode: 'continuous' }] as any
+                }
             });
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
@@ -94,6 +99,41 @@ export default function ScanPage() {
             stopCamera();
         }
     }, [scanStage, startCamera, stopCamera]);
+
+    const handleFocus = useCallback(async (e: React.MouseEvent<HTMLVideoElement> | React.TouchEvent<HTMLVideoElement>) => {
+        if (!cameraStream) return;
+        const video = videoRef.current;
+        if (!video) return;
+
+        const rect = video.getBoundingClientRect();
+        let clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+        let clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+
+        const x = (clientX - rect.left) / rect.width;
+        const y = (clientY - rect.top) / rect.height;
+
+        const track = cameraStream.getVideoTracks()[0];
+
+        if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
+            navigator.vibrate(50);
+        }
+
+        if (track && typeof track.getCapabilities === 'function') {
+            const capabilities: any = track.getCapabilities();
+            if (capabilities.focusMode) {
+                try {
+                    await track.applyConstraints({
+                        advanced: [{
+                            pointsOfInterest: [{ x, y }],
+                            focusMode: 'single-shot'
+                        }]
+                    } as any);
+                } catch (err) {
+                    console.log("Focus not supported:", err);
+                }
+            }
+        }
+    }, [cameraStream]);
 
     // Live OpenCV detection loop
     useEffect(() => {
@@ -432,7 +472,9 @@ export default function ScanPage() {
                         autoPlay
                         playsInline
                         muted
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover cursor-pointer"
+                        onClick={handleFocus}
+                        onTouchEnd={handleFocus}
                     />
 
                     {/* Live Document Overlay */}
@@ -501,7 +543,7 @@ export default function ScanPage() {
                             <img
                                 src={(scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital')) && transformedImage ? transformedImage : (image || undefined)}
                                 alt="Scanned diary page"
-                                className="w-full h-full object-contain pointer-events-none"
+                                className="w-full h-full object-fill pointer-events-none"
                             />
                         </div>
 
@@ -620,18 +662,6 @@ export default function ScanPage() {
                             </div>
                         )}
 
-                        {/* External Control Bar to prevent overlap */}
-                        {scanStage === 'cropping' && (
-                            <div className="absolute bottom-8 left-0 right-0 px-6 sm:max-w-2xl sm:mx-auto flex justify-between gap-4 pointer-events-auto z-50">
-                                <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-black/60 text-white hover:bg-black/80 backdrop-blur-md border border-white/20 py-6 text-lg rounded-2xl shadow-xl font-semibold">
-                                    {t('btnDiscard')}
-                                </Button>
-                                <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-xl shadow-[var(--color-primary-500)]/40 text-lg rounded-2xl font-bold border border-white/10">
-                                    {t('btnConfirmCrop')}
-                                </Button>
-                            </div>
-                        )}
-
                         {/* Processing Overlay */}
                         {scanStage === 'analyzing' && (
                             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px]">
@@ -654,75 +684,89 @@ export default function ScanPage() {
                     </div>
                 )}
 
+                {/* External Control Bar moved outside containerRef to prevent overlap with the image scaling */}
+                {scanStage === 'cropping' && (
+                    <div className="fixed bottom-6 left-0 right-0 px-6 sm:max-w-2xl sm:mx-auto flex justify-between gap-4 pointer-events-auto z-50">
+                        <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-black/70 text-white hover:bg-black/90 backdrop-blur-md border border-white/20 py-6 text-lg rounded-2xl shadow-xl font-semibold">
+                            {t('btnDiscard')}
+                        </Button>
+                        <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-[0_8px_32px_rgba(245,158,11,0.4)] text-lg rounded-2xl font-bold border border-white/10">
+                            {t('btnConfirmCrop')}
+                        </Button>
+                    </div>
+                )}
+
                 <input type="file" accept="image/*" className="sr-only" ref={fileInputRef} onChange={handleFileSelect} />
                 <canvas ref={canvasRef} className="hidden" />
             </main>
 
             {/* Result Panel */}
-            {scanStage === 'complete' && result && (
-                <div className="p-4 sm:p-6 bg-[var(--color-neutral-800)] rounded-t-3xl min-h-[200px] border-t border-[var(--color-neutral-700)] z-10 relative mt-[-2rem]">
-                    <div className="space-y-4 animate-fade-in-up">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-2 text-[var(--color-success-500)]">
-                                <Check size={20} strokeWidth={3} />
-                                <span className="font-bold text-lg">{t('statusComplete')}</span>
-                            </div>
-
-                            <div className="flex bg-[var(--color-neutral-900)] rounded-lg p-1 border border-[var(--color-neutral-700)]">
-                                <button
-                                    onClick={() => setViewMode('original')}
-                                    className={cn(
-                                        "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
-                                        viewMode === 'original' ? "bg-[var(--color-primary-600)] text-white shadow-sm" : "text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-200)]"
-                                    )}
-                                >
-                                    {t('viewOriginal')}
-                                </button>
-                                <button
-                                    onClick={() => setViewMode('digital')}
-                                    className={cn(
-                                        "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
-                                        viewMode === 'digital' ? "bg-[var(--color-primary-600)] text-white shadow-sm" : "text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-200)]"
-                                    )}
-                                >
-                                    {t('viewDigital')}
-                                </button>
-                            </div>
-                        </div>
-
-                        {viewMode === 'digital' && (
-                            <div className="bg-[var(--color-neutral-700)] p-6 rounded-xl border border-[var(--color-neutral-600)] animate-fade-in">
-                                <p className="text-base text-[var(--color-neutral-200)] italic mb-4 leading-relaxed">
-                                    "{result.summary}"
-                                </p>
-                                <div className="flex gap-2 mb-6 flex-wrap">
-                                    {result.tags.map((tag) => <Badge key={tag} variant="info" size="md">#{tag}</Badge>)}
+            {
+                scanStage === 'complete' && result && (
+                    <div className="p-4 sm:p-6 bg-[var(--color-neutral-800)] rounded-t-3xl min-h-[200px] border-t border-[var(--color-neutral-700)] z-10 relative mt-[-2rem]">
+                        <div className="space-y-4 animate-fade-in-up">
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-2 text-[var(--color-success-500)]">
+                                    <Check size={20} strokeWidth={3} />
+                                    <span className="font-bold text-lg">{t('statusComplete')}</span>
                                 </div>
-                                <div className="space-y-3">
-                                    <h3 className="text-sm font-semibold text-[var(--color-neutral-400)] uppercase tracking-wider">Detected Events</h3>
-                                    {result.events.map((event, index) => (
-                                        <div key={index} className="flex justify-between items-center text-sm pb-3 border-b border-[var(--color-neutral-600)] last:border-0 last:pb-0">
-                                            <span className="text-[var(--color-neutral-400)]">{event.time}</span>
-                                            <span className="font-medium text-[var(--color-neutral-50)]">{event.title}</span>
-                                        </div>
-                                    ))}
+
+                                <div className="flex bg-[var(--color-neutral-900)] rounded-lg p-1 border border-[var(--color-neutral-700)]">
+                                    <button
+                                        onClick={() => setViewMode('original')}
+                                        className={cn(
+                                            "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
+                                            viewMode === 'original' ? "bg-[var(--color-primary-600)] text-white shadow-sm" : "text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-200)]"
+                                        )}
+                                    >
+                                        {t('viewOriginal')}
+                                    </button>
+                                    <button
+                                        onClick={() => setViewMode('digital')}
+                                        className={cn(
+                                            "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
+                                            viewMode === 'digital' ? "bg-[var(--color-primary-600)] text-white shadow-sm" : "text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-200)]"
+                                        )}
+                                    >
+                                        {t('viewDigital')}
+                                    </button>
                                 </div>
                             </div>
-                        )}
 
-                        <div className="flex gap-3">
-                            <Button variant="ghost" size="lg" onClick={handleDiscard} className="flex-1 text-[var(--color-neutral-300)] hover:text-[var(--color-neutral-50)]">
-                                {t('btnDiscard')}
-                            </Button>
-                            <Link href="/dashboard" className="flex-1">
-                                <Button variant="primary" size="lg" onClick={handleSave} fullWidth>
-                                    {t('btnSaveLog')}
+                            {viewMode === 'digital' && (
+                                <div className="bg-[var(--color-neutral-700)] p-6 rounded-xl border border-[var(--color-neutral-600)] animate-fade-in">
+                                    <p className="text-base text-[var(--color-neutral-200)] italic mb-4 leading-relaxed">
+                                        "{result.summary}"
+                                    </p>
+                                    <div className="flex gap-2 mb-6 flex-wrap">
+                                        {result.tags.map((tag) => <Badge key={tag} variant="info" size="md">#{tag}</Badge>)}
+                                    </div>
+                                    <div className="space-y-3">
+                                        <h3 className="text-sm font-semibold text-[var(--color-neutral-400)] uppercase tracking-wider">Detected Events</h3>
+                                        {result.events.map((event, index) => (
+                                            <div key={index} className="flex justify-between items-center text-sm pb-3 border-b border-[var(--color-neutral-600)] last:border-0 last:pb-0">
+                                                <span className="text-[var(--color-neutral-400)]">{event.time}</span>
+                                                <span className="font-medium text-[var(--color-neutral-50)]">{event.title}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex gap-3">
+                                <Button variant="ghost" size="lg" onClick={handleDiscard} className="flex-1 text-[var(--color-neutral-300)] hover:text-[var(--color-neutral-50)]">
+                                    {t('btnDiscard')}
                                 </Button>
-                            </Link>
+                                <Link href="/dashboard" className="flex-1">
+                                    <Button variant="primary" size="lg" onClick={handleSave} fullWidth>
+                                        {t('btnSaveLog')}
+                                    </Button>
+                                </Link>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             <style jsx global>{`
                 @keyframes scan {
@@ -732,6 +776,6 @@ export default function ScanPage() {
                     100% { top: 100%; opacity: 0; }
                 }
             `}</style>
-        </div>
+        </div >
     );
 }
