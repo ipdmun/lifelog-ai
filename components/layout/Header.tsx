@@ -253,31 +253,59 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="flex justify-start px-2">
                   <LanguageSwitcher />
                 </div>
-                {secondaryAction && (
-                  <Link
-                    href={secondaryAction.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    <Button variant="outline" size="lg" fullWidth>
-                      {t('btnDashboard')}
-                    </Button>
-                  </Link>
-                )}
-                {primaryAction && (
-                  <Link
-                    href={primaryAction.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    <Button variant="primary" size="lg" fullWidth>
-                      {t('btnGetStarted')}
-                    </Button>
-                  </Link>
+                {user ? (
+                  <>
+                    <Link
+                      href="/dashboard"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="block"
+                    >
+                      <Button variant="outline" size="lg" fullWidth>
+                        Dashboard
+                      </Button>
+                    </Link>
+                    <Link
+                      href="/diary"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="block"
+                    >
+                      <Button variant="outline" size="lg" fullWidth>
+                        Diary
+                      </Button>
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    {secondaryAction && (
+                      <Link
+                        href={secondaryAction.href}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="block"
+                      >
+                        <Button variant="outline" size="lg" fullWidth>
+                          {t('btnDashboard')}
+                        </Button>
+                      </Link>
+                    )}
+                    {primaryAction && (
+                      <Link
+                        href={primaryAction.href}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="block"
+                      >
+                        <Button variant="primary" size="lg" fullWidth>
+                          {t('btnGetStarted')}
+                        </Button>
+                      </Link>
+                    )}
+                  </>
                 )}
               </div>
             </div>
           </div>
         </div>
       )}
+
       {/* Login Modal */}
       <LoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} />
     </header>

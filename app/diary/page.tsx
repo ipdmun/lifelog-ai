@@ -20,7 +20,6 @@ export default function DiaryPage() {
 
     // Modal state
     const [selectedLog, setSelectedLog] = useState<LogItem | null>(null);
-    const [isEditingLog, setIsEditingLog] = useState(false);
     const [editLogData, setEditLogData] = useState<LogItem | null>(null);
 
     const handleSaveLogEdit = async () => {
@@ -42,8 +41,9 @@ export default function DiaryPage() {
         }
 
         setSelectedLog(editLogData);
-        setIsEditingLog(false);
     };
+
+    const hasChanges = selectedLog && editLogData && JSON.stringify(selectedLog) !== JSON.stringify(editLogData);
 
     useEffect(() => {
         if (user) {
@@ -119,7 +119,7 @@ export default function DiaryPage() {
 
                     <div className="bg-white rounded-2xl p-6 border border-[var(--color-neutral-200)] shadow-sm min-h-[500px]">
                         {allLogs.length > 0 ? (
-                            <LogTimeline logs={allLogs} onLogClick={(log) => setSelectedLog(log)} />
+                            <LogTimeline logs={allLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(log); }} />
                         ) : (
                             <div className="flex items-center justify-center h-[400px] text-[var(--color-neutral-500)] italic">
                                 No diary entries found yet. Upload calendar or scan notes to get started!
@@ -139,12 +139,13 @@ export default function DiaryPage() {
                                 <Badge variant={selectedLog.type === 'digital' ? 'primary' : 'outline'} className="mb-2">
                                     {selectedLog.type === 'digital' ? 'Digital Appt' : 'Analog Scan'}
                                 </Badge>
-                                {isEditingLog ? (
+                                {selectedLog.type === 'analog' ? (
                                     <input
                                         type="text"
-                                        className="w-full text-lg font-bold text-[var(--color-neutral-900)] bg-white border border-[var(--color-neutral-300)] rounded-md px-2 py-1"
+                                        className="w-full text-lg font-bold text-[var(--color-neutral-900)] bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-1 transition-colors outline-none cursor-text"
                                         value={editLogData?.summary || editLogData?.title || ''}
                                         onChange={(e) => setEditLogData(prev => ({ ...prev!, summary: e.target.value, title: e.target.value }))}
+                                        placeholder="Enter Title..."
                                     />
                                 ) : (
                                     <h3 className="text-lg font-bold text-[var(--color-neutral-900)] block truncate">
@@ -152,11 +153,6 @@ export default function DiaryPage() {
                                     </h3>
                                 )}
                             </div>
-                            {!isEditingLog && selectedLog.type === 'analog' && (
-                                <Button variant="outline" size="sm" onClick={() => { setIsEditingLog(true); setEditLogData(selectedLog); }}>
-                                    Edit
-                                </Button>
-                            )}
                         </CardHeader>
 
                         <CardContent className="overflow-y-auto p-6 space-y-4 flex-1">
@@ -172,28 +168,30 @@ export default function DiaryPage() {
 
                             <div className="space-y-3">
                                 <h4 className="text-sm font-semibold text-[var(--color-neutral-500)] tracking-wider">DETECTED EVENTS</h4>
-                                {isEditingLog ? (
+                                {selectedLog.type === 'analog' ? (
                                     <ul className="space-y-3">
                                         {(editLogData?.events || []).map((evt, idx) => (
-                                            <li key={idx} className="flex flex-col gap-2 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-[var(--color-primary-200)]">
+                                            <li key={idx} className="flex flex-col gap-2 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-transparent hover:border-[var(--color-neutral-200)] focus-within:border-[var(--color-neutral-300)] focus-within:bg-white transition-colors">
                                                 <input
                                                     type="text"
-                                                    className="text-sm text-[var(--color-neutral-600)] font-medium bg-white border border-[var(--color-neutral-300)] rounded-md px-2 py-1 w-full"
+                                                    className="text-sm text-[var(--color-neutral-600)] font-medium bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-0.5 w-full outline-none cursor-text"
                                                     value={evt.time}
                                                     onChange={(e) => {
                                                         const newEvts = [...(editLogData?.events || [])];
                                                         newEvts[idx].time = e.target.value;
                                                         setEditLogData(prev => ({ ...prev!, events: newEvts }));
                                                     }}
+                                                    placeholder="Time/Field"
                                                 />
                                                 <textarea
-                                                    className="text-sm font-bold text-[var(--color-neutral-900)] bg-white border border-[var(--color-neutral-300)] rounded-md px-2 py-1 w-full resize-none min-h-[60px]"
+                                                    className="text-sm font-bold text-[var(--color-neutral-900)] bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-0.5 w-full resize-none min-h-[40px] outline-none cursor-text"
                                                     value={evt.title}
                                                     onChange={(e) => {
                                                         const newEvts = [...(editLogData?.events || [])];
                                                         newEvts[idx].title = e.target.value;
                                                         setEditLogData(prev => ({ ...prev!, events: newEvts }));
                                                     }}
+                                                    placeholder="Extracted Text..."
                                                 />
                                             </li>
                                         ))}
@@ -222,17 +220,17 @@ export default function DiaryPage() {
                         </CardContent>
 
                         <div className="p-4 border-t border-[var(--color-neutral-100)] bg-[var(--color-neutral-50)]/50 flex gap-3 shrink-0">
-                            {isEditingLog ? (
+                            {hasChanges ? (
                                 <>
-                                    <Button fullWidth onClick={() => setIsEditingLog(false)} variant="outline">
-                                        Cancel
+                                    <Button fullWidth onClick={() => setEditLogData(selectedLog)} variant="outline">
+                                        Undo Changes
                                     </Button>
                                     <Button fullWidth onClick={handleSaveLogEdit} variant="primary">
                                         Save Changes
                                     </Button>
                                 </>
                             ) : (
-                                <Button fullWidth onClick={() => setSelectedLog(null)} variant="primary">
+                                <Button fullWidth onClick={() => { setSelectedLog(null); setEditLogData(null); }} variant="primary">
                                     Close
                                 </Button>
                             )}
