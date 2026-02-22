@@ -67,9 +67,15 @@ export default function ScanPage() {
             const src = cv.imread(srcCanvas);
             const dst = new cv.Mat();
             cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
+            // Stronger blur to remove noise like keyboard keys
             cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-            // Increase threshold range slightly to catch less sharp edges and process faster
-            cv.Canny(dst, dst, 50, 150, 3, false);
+            // Canny edge detection
+            cv.Canny(dst, dst, 40, 120, 3, false);
+
+            // Dilate edges to connect broken parts of the document contour
+            const M = cv.Mat.ones(3, 3, cv.CV_8U);
+            cv.dilate(dst, dst, M, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+            M.delete();
 
             const contours = new cv.MatVector();
             const hierarchy = new cv.Mat();
@@ -86,13 +92,15 @@ export default function ScanPage() {
                 const contour = contours.get(i);
                 const area = cv.contourArea(contour, false);
 
-                // Extremely low tolerance to detect anything, but rely on scoring to pick the best
-                if (area > (srcCanvas.width * srcCanvas.height * 0.02)) {
+                // Area must be at least 4% of the image. Passports are usually 20-40%. 
+                // This eliminates small keyboard keys instantly.
+                if (area > (srcCanvas.width * srcCanvas.height * 0.04)) {
                     const peri = cv.arcLength(contour, true);
                     const tmpApprox = new cv.Mat();
-                    cv.approxPolyDP(contour, tmpApprox, 0.03 * peri, true);
+                    // Loosen approxPolyDP slightly to handle rounded corners of passports
+                    cv.approxPolyDP(contour, tmpApprox, 0.04 * peri, true);
 
-                    if (tmpApprox.rows === 4) {
+                    if (tmpApprox.rows === 4 && cv.isContourConvex(tmpApprox)) {
                         // Calculate the center of the contour bounding box
                         let cx = 0, cy = 0;
                         for (let j = 0; j < 4; j++) {
@@ -106,11 +114,17 @@ export default function ScanPage() {
                         const maxDist = Math.sqrt(centerX * centerX + centerY * centerY);
                         const distFromCenter = Math.sqrt(Math.pow(cx - centerX, 2) + Math.pow(cy - centerY, 2)) / maxDist;
 
-                        // Priority scoring: Area is good, being off-center is bad
-                        // (area ratio) * (1 - distance penalty) -> closer to center wins even if slightly smaller
+                        // Extremely strict penalty for off-center objects. 
+                        // Center objects get a huge boost.
                         const areaRatio = area / (srcCanvas.width * srcCanvas.height);
-                        const distancePenalty = distFromCenter * 2.0; // Penalty multiplier
-                        const score = areaRatio * Math.max(0.1, (1.0 - distancePenalty));
+
+                        // If it's more than 30% off center, we aggressively discount its area
+                        let score = areaRatio;
+                        if (distFromCenter < 0.2) {
+                            score *= 3.0; // Huge boost if exactly in the center
+                        } else if (distFromCenter > 0.4) {
+                            score *= 0.1; // Huge penalty if far from center
+                        }
 
                         if (score > bestScore) {
                             bestScore = score;
@@ -154,7 +168,8 @@ export default function ScanPage() {
 
         try {
             const canvas = canvasRef.current!;
-            const scale = Math.min(640 / Math.max(video.videoWidth, video.videoHeight), 1);
+            // Dramatically lower resolution to 320 for lightning fast, stable edge tracking
+            const scale = Math.min(320 / Math.max(video.videoWidth, video.videoHeight), 1);
             canvas.width = video.videoWidth * scale;
             canvas.height = video.videoHeight * scale;
             const ctx = canvas.getContext('2d')!;
