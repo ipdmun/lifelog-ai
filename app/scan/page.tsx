@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Camera, ArrowLeft, Check, Sparkles, X, Image as ImageIcon } from "lucide-react";
+import { Camera, ArrowLeft, Check, Sparkles, X, Image as ImageIcon, RefreshCcw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,7 @@ interface ScanResult {
     events: Array<{
         time: string;
         title: string;
+        date?: string;
     }>;
     tags: string[];
 }
@@ -50,6 +51,8 @@ export default function ScanPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const announce = useAnnounce();
+    const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+    const [activeCameraId, setActiveCameraId] = useState<string | null>(null);
 
     // WebRTC Live camera states
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -71,16 +74,13 @@ export default function ScanPage() {
             const src = cv.imread(srcCanvas);
             const dst = new cv.Mat();
             cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY, 0);
-            // Stronger blur to remove noise like keyboard keys
             cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-            // Canny edge detection
             cv.Canny(dst, dst, 40, 120, 3, false);
 
             const contours = new cv.MatVector();
             const hierarchy = new cv.Mat();
             cv.findContours(dst, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-            // Calculate center of the screen to prioritize central objects
             const centerX = srcCanvas.width / 2;
             const centerY = srcCanvas.height / 2;
             let bestScore = 0;
@@ -91,16 +91,12 @@ export default function ScanPage() {
                 const contour = contours.get(i);
                 const area = cv.contourArea(contour, false);
 
-                // Area must be at least 4% of the image. Passports are usually 20-40%. 
-                // This eliminates small keyboard keys instantly.
                 if (area > (srcCanvas.width * srcCanvas.height * 0.04)) {
                     const peri = cv.arcLength(contour, true);
                     const tmpApprox = new cv.Mat();
-                    // Loosen approxPolyDP slightly to handle rounded corners of passports
                     cv.approxPolyDP(contour, tmpApprox, 0.04 * peri, true);
 
                     if (tmpApprox.rows === 4 && cv.isContourConvex(tmpApprox)) {
-                        // Calculate the center of the contour bounding box
                         let cx = 0, cy = 0;
                         for (let j = 0; j < 4; j++) {
                             cx += tmpApprox.data32S[j * 2];
@@ -109,20 +105,15 @@ export default function ScanPage() {
                         cx /= 4;
                         cy /= 4;
 
-                        // Calculate distance from center (normalized to 0-1)
                         const maxDist = Math.sqrt(centerX * centerX + centerY * centerY);
                         const distFromCenter = Math.sqrt(Math.pow(cx - centerX, 2) + Math.pow(cy - centerY, 2)) / maxDist;
-
-                        // Extremely strict penalty for off-center objects. 
-                        // Center objects get a huge boost.
                         const areaRatio = area / (srcCanvas.width * srcCanvas.height);
 
-                        // If it's more than 30% off center, we aggressively discount its area
                         let score = areaRatio;
                         if (distFromCenter < 0.2) {
-                            score *= 3.0; // Huge boost if exactly in the center
+                            score *= 3.0;
                         } else if (distFromCenter > 0.4) {
-                            score *= 0.1; // Huge penalty if far from center
+                            score *= 0.1;
                         }
 
                         if (score > bestScore) {
@@ -167,7 +158,6 @@ export default function ScanPage() {
 
         try {
             const canvas = canvasRef.current!;
-            // Dramatically lower resolution to 320 for lightning fast, stable edge tracking
             const scale = Math.min(320 / Math.max(video.videoWidth, video.videoHeight), 1);
             canvas.width = video.videoWidth * scale;
             canvas.height = video.videoHeight * scale;
@@ -180,86 +170,78 @@ export default function ScanPage() {
             console.error("Live detection error", e);
         }
 
-        // Run at ~10 FPS to save battery and avoid UI freeze
         requestRef.current = window.setTimeout(() => requestAnimationFrame(liveDetectionLoop), 100);
     }, [cvReady, scanStage, detectDocument]);
 
     const startCamera = useCallback(async () => {
         if (scanStage !== 'idle') return;
         try {
-            // 1. Initial request to ensure camera permissions are fully granted
             let stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
 
-            // 2. Enumerate devices to pick a non-ultrawide rear camera if available
             const devices = await navigator.mediaDevices.enumerateDevices();
             const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            setAvailableCameras(videoDevices);
 
-            let bestDeviceId = null;
-            let highestScore = -1;
+            let bestDeviceId = activeCameraId || null;
 
-            for (const device of videoDevices) {
-                const label = device.label.toLowerCase();
-                let score = 0;
-
-                // Identify back camera
-                if (label.includes('back') || label.includes('environment') || label.includes('후면')) {
-                    score += 10;
-
-                    // Prioritize "main" or "standard" camera
-                    if (label.includes('main') || label.includes('standard') || label.includes('기본')) score += 5;
-
-                    // Heavily penalize ultrawide / 0.5x / wide (sometimes wide means ultrawide)
-                    if (label.includes('wide') || label.includes('초광각') || label.includes('0.5x')) score -= 15;
-                    if (label.includes('ultra')) score -= 15;
-
-                    // Penalize telephoto/macro
-                    if (label.includes('tele') || label.includes('망원') || label.includes('macro')) score -= 10;
-
-                    if (score > highestScore) {
-                        highestScore = score;
-                        bestDeviceId = device.deviceId;
+            if (!bestDeviceId) {
+                let highestScore = -1;
+                for (const device of videoDevices) {
+                    const label = device.label.toLowerCase();
+                    let score = 0;
+                    if (label.includes('back') || label.includes('environment') || label.includes('후면')) {
+                        score += 10;
+                        if (label.includes('main') || label.includes('standard') || label.includes('기본')) score += 5;
+                        if (label.includes('wide') || label.includes('초광각') || label.includes('0.5x')) score -= 15;
+                        if (label.includes('ultra')) score -= 15;
+                        if (label.includes('tele') || label.includes('망원') || label.includes('macro')) score -= 10;
+                        if (score > highestScore) {
+                            highestScore = score;
+                            bestDeviceId = device.deviceId;
+                        }
                     }
+                }
+                if (!bestDeviceId && videoDevices.length > 0) {
+                    bestDeviceId = videoDevices[videoDevices.length - 1].deviceId;
                 }
             }
 
-            // If no "back" camera found with scoring, fall back to last camera
-            if (!bestDeviceId && videoDevices.length > 0) {
-                bestDeviceId = videoDevices[videoDevices.length - 1].deviceId;
-            }
-
-            // Stop the temporary stream
             stream.getTracks().forEach(t => t.stop());
 
-            // 3. Re-request with the best explicit device id
             if (bestDeviceId) {
+                setActiveCameraId(bestDeviceId);
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         deviceId: { exact: bestDeviceId },
-                        width: { ideal: 1920, max: 2560 },
-                        height: { ideal: 1080, max: 1440 },
-                        // Focus on high quality and standard focus
-                        advanced: [{ focusMode: "continuous" }] as any
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
                     }
                 });
             } else {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         facingMode: 'environment',
-                        width: { ideal: 1920, max: 2560 },
-                        height: { ideal: 1080, max: 1440 },
-                        advanced: [{ focusMode: "continuous" }] as any
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
                     }
                 });
             }
 
+            // Try enabling focus mode separately
+            try {
+                const track = stream.getVideoTracks()[0];
+                const capabilities = track.getCapabilities() as any;
+                if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as any);
+                }
+            } catch (e) { }
+
             cameraStreamRef.current = stream;
 
-            // 4. Force optical/digital zoom back to 1.0 (Standard 1x scale) if supported
             const track = stream.getVideoTracks()[0];
             const capabilities = track.getCapabilities() as any;
             if (capabilities.zoom) {
                 try {
-                    // Attempt to set 1x ratio (ignoring any <1.0 ultrawide range if present)
                     const targetZoom = Math.max(capabilities.zoom.min || 1, 1);
                     await track.applyConstraints({
                         advanced: [{ zoom: targetZoom }]
@@ -276,7 +258,7 @@ export default function ScanPage() {
             console.error("Camera error:", err);
             announce("Could not start camera. Check permissions.", "polite");
         }
-    }, [scanStage, liveDetectionLoop, announce]);
+    }, [scanStage, liveDetectionLoop, announce, activeCameraId]);
 
     const handleTapToFocus = useCallback(async (e: React.MouseEvent<HTMLVideoElement> | React.TouchEvent<HTMLVideoElement>) => {
         if (!videoRef.current || !cameraStreamRef.current) return;
@@ -284,9 +266,7 @@ export default function ScanPage() {
         if (!track) return;
 
         const capabilities = track.getCapabilities && track.getCapabilities() as any;
-        if (!capabilities || !capabilities.focusMode) {
-            console.warn("Manual focus strictly not supported by browser/device");
-        }
+        if (!capabilities) return;
 
         const rect = videoRef.current.getBoundingClientRect();
         let clientX, clientY;
@@ -306,32 +286,33 @@ export default function ScanPage() {
         setTimeout(() => setFocusPoint(null), 1500);
 
         try {
-            // Some browsers require certain sequence to trigger focus
-            // 1. Try single-shot if supported, merged with manual
-            const focusConstraint = capabilities.focusMode.includes("single-shot")
-                ? "single-shot"
-                : "manual";
+            const constraints: any = { advanced: [] };
 
-            await track.applyConstraints({
-                advanced: [{
-                    focusMode: focusConstraint,
-                    // Note: pointsOfInterest support is rare but we include it for best effort
-                    // We also try to use coordinates mapped to 0..1 range
+            if (capabilities.focusMode && capabilities.focusMode.includes("manual")) {
+                constraints.advanced.push({ focusMode: "manual" });
+            } else if (capabilities.focusMode && capabilities.focusMode.includes("single-shot")) {
+                constraints.advanced.push({ focusMode: "single-shot" });
+            }
+
+            if (capabilities.pointsOfInterest) {
+                constraints.advanced.push({
                     pointsOfInterest: [{ x: x / rect.width, y: y / rect.height }]
-                }]
-            } as any);
+                });
+            }
 
-            // Re-apply continuous auto focus after a short delay to "lock" it in or resume
+            if (constraints.advanced.length > 0) {
+                await track.applyConstraints(constraints);
+            }
+
             setTimeout(async () => {
                 try {
                     await track.applyConstraints({
                         advanced: [{ focusMode: "continuous" }]
                     } as any);
                 } catch (e) { }
-            }, 1000);
+            }, 1500);
         } catch (err) {
-            console.warn("Focus constraint failed, trying simple continuous reset:", err);
-            // Fallback: Just toggle continuous mode to force a refocus
+            console.warn("Focus failed:", err);
             try {
                 await track.applyConstraints({ advanced: [{ focusMode: "manual" }] } as any);
                 await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] } as any);
@@ -398,7 +379,7 @@ export default function ScanPage() {
         }
 
         stopCamera();
-        announce('Photo captured with smart crop layout.', 'polite');
+        announce('Photo captured.', 'polite');
         setScanStage('cropping');
     };
 
@@ -413,7 +394,6 @@ export default function ScanPage() {
                 img.src = imgSource;
                 img.onload = () => {
                     setImageAspect(img.width / img.height);
-
                     if (cvReady) {
                         const canvas = document.createElement('canvas');
                         const scale = Math.min(1000 / Math.max(img.width, img.height), 1);
@@ -421,7 +401,6 @@ export default function ScanPage() {
                         canvas.height = img.height * scale;
                         const ctx = canvas.getContext('2d')!;
                         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
                         const cv = (window as any).cv;
                         const pts = detectDocument(cv, canvas);
                         if (pts) setCropPoints(pts);
@@ -439,7 +418,6 @@ export default function ScanPage() {
     const confirmCrop = async () => {
         if (!image) return;
         setScanStage('transforming');
-        announce('Applying perspective transform...', 'polite');
         const cv = (window as any).cv;
 
         try {
@@ -477,37 +455,12 @@ export default function ScanPage() {
             const h2 = Math.hypot(orderedPts[0].x - orderedPts[3].x, orderedPts[0].y - orderedPts[3].y);
             let maxHeight = Math.max(h1, h2);
 
-            // Pro-level feature: Automatically correct the aspect ratio by snapping to real-world document standard proportions
-            // This prevents the "squashed/stretched" look when taking photos from an angle!
-            const ratio = maxWidth / maxHeight;
-            if (ratio > 0.60 && ratio < 0.82) {
-                // B7 Passport / ID Card Portrait (88x125mm -> ratio: ~0.704)
-                maxHeight = maxWidth / 0.704;
-            } else if (ratio > 1.25 && ratio < 1.65) {
-                // ID Card Landscape (e.g. Driver's License)
-                maxWidth = maxHeight * 1.42;
-            } else if (ratio > 0.85 && ratio < 1.15) {
-                // Perfect Square (e.g. Polaroid, QR code)
-                maxHeight = maxWidth;
-            } else if (ratio > 0.40 && ratio < 0.60) {
-                // Tall Receipts (no strict fix needed, but slight regularization helps)
-                // maxHeight = maxWidth / 0.5;
-            }
-
-            const dstCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                0, 0,
-                maxWidth - 1, 0,
-                maxWidth - 1, maxHeight - 1,
-                0, maxHeight - 1
-            ]);
-
+            const dstCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth - 1, 0, maxWidth - 1, maxHeight - 1, 0, maxHeight - 1]);
             const M = cv.getPerspectiveTransform(srcCoords, dstCoords);
             const warpedSrc = new cv.Mat();
             const dsize = new cv.Size(maxWidth, maxHeight);
-
             cv.warpPerspective(src, warpedSrc, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
-            // Draw warped to original canvas to get dataURL
             const canvas = canvasRef.current!;
             canvas.width = maxWidth;
             canvas.height = maxHeight;
@@ -516,42 +469,27 @@ export default function ScanPage() {
             setTransformedImage(finalImageUrl);
             setImageAspect(maxWidth / maxHeight);
 
-            // Cleanup CV vars
-            M.delete(); srcCoords.delete(); dstCoords.delete();
-            src.delete(); warpedSrc.delete();
+            M.delete(); srcCoords.delete(); dstCoords.delete(); src.delete(); warpedSrc.delete();
 
             setScanStage('analyzing');
-            announce('AI is analyzing the document...', 'polite');
-
-            // Phase 3: Advanced AI Analysis (Gemini)
             const aiResult = await analyzeImageWithAI(finalImageUrl, locale);
 
             if (aiResult.success && aiResult.data) {
                 const data = aiResult.data;
-                // Intelligent fallback: If logDate is missing or not a valid date, check events for a date
                 if ((!data.logDate || isNaN(new Date(data.logDate).getTime())) && data.events) {
                     const dateEvent = data.events.find((e: any) => e.date && !isNaN(new Date(e.date).getTime()));
-                    if (dateEvent) {
-                        data.logDate = dateEvent.date;
-                    }
+                    if (dateEvent) data.logDate = dateEvent.date;
                 }
-
                 setScanStage('complete');
                 setViewMode('digital');
                 setResult(data);
-                announce('Analysis complete', 'polite');
             } else {
-                throw new Error(aiResult.error || "AI failed to process the image");
+                throw new Error("AI failed");
             }
         } catch (e) {
             console.error("Analysis Error", e);
             setScanStage('complete');
-            setResult({
-                summary: "AI analysis failed over OCR. Please check API keys or try again.",
-                sentiment: "Unknown",
-                events: [],
-                tags: ["Error"]
-            });
+            setResult({ summary: "Error processing image", sentiment: "Unknown", events: [], tags: ["Error"] });
         }
     };
 
@@ -560,16 +498,11 @@ export default function ScanPage() {
         setTransformedImage(null);
         setResult(null);
         setScanStage('idle');
-        announce('Image discarded', 'polite');
     };
 
     const handleSave = async () => {
         if (!result) return;
-
-        announce('Saving to log...', 'polite');
-
         const logDate = result.logDate ? new Date(result.logDate) : new Date();
-        // If the date is valid, use it, otherwise use today
         const finalDate = isNaN(logDate.getTime()) ? new Date() : logDate;
 
         const newLog: LogItem = {
@@ -587,62 +520,41 @@ export default function ScanPage() {
             if (user) {
                 const userDocRef = doc(db, "users", user.uid);
                 await updateDoc(userDocRef, {
-                    logs: arrayUnion({
-                        ...newLog,
-                        timestamp: finalDate.toISOString()
-                    })
+                    logs: arrayUnion({ ...newLog, timestamp: finalDate.toISOString() })
                 });
             } else {
-                // LocalStorage fallback
                 const savedLogs = localStorage.getItem("dashboardLogs");
                 const parsed = savedLogs ? JSON.parse(savedLogs) : [];
-                parsed.push({
-                    ...newLog,
-                    timestamp: finalDate.toISOString()
-                });
+                parsed.push({ ...newLog, timestamp: finalDate.toISOString() });
                 localStorage.setItem("dashboardLogs", JSON.stringify(parsed));
             }
             router.push('/dashboard');
         } catch (err) {
             console.error("Save error:", err);
-            announce('Save failed', 'polite');
         }
     };
 
     const pointerMoveHandler = (e: React.PointerEvent) => {
         if (activeElement === null || !containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
-
         const currentX = ((e.clientX - rect.left) / rect.width) * 100;
         const currentY = ((e.clientY - rect.top) / rect.height) * 100;
-
         const newPts = [...cropPoints];
 
         if (typeof activeElement === 'number') {
             newPts[activeElement] = { x: Math.max(0, Math.min(100, currentX)), y: Math.max(0, Math.min(100, currentY)) };
         } else if (typeof activeElement === 'string' && activeElement.startsWith('e')) {
             const eIndex = parseInt(activeElement.charAt(1));
-
             if (lastPointerPos.current) {
                 const dx = currentX - lastPointerPos.current.x;
                 const dy = currentY - lastPointerPos.current.y;
-
                 const pt1 = eIndex;
                 const pt2 = (eIndex + 1) % 4;
-
-                newPts[pt1] = {
-                    x: Math.max(0, Math.min(100, newPts[pt1].x + dx)),
-                    y: Math.max(0, Math.min(100, newPts[pt1].y + dy))
-                };
-                newPts[pt2] = {
-                    x: Math.max(0, Math.min(100, newPts[pt2].x + dx)),
-                    y: Math.max(0, Math.min(100, newPts[pt2].y + dy))
-                };
+                newPts[pt1] = { x: Math.max(0, Math.min(100, newPts[pt1].x + dx)), y: Math.max(0, Math.min(100, newPts[pt1].y + dy)) };
+                newPts[pt2] = { x: Math.max(0, Math.min(100, newPts[pt2].x + dx)), y: Math.max(0, Math.min(100, newPts[pt2].y + dy)) };
             }
-
             lastPointerPos.current = { x: currentX, y: currentY };
         }
-
         setCropPoints(newPts);
     };
 
@@ -658,7 +570,6 @@ export default function ScanPage() {
                 src="https://docs.opencv.org/4.8.0/opencv.js"
                 strategy="afterInteractive"
                 onLoad={() => {
-                    // OpenCV.js uses WASM, which initializes asynchronously after script load.
                     const checkCv = setInterval(() => {
                         if ((window as any).cv && typeof (window as any).cv.Mat === 'function') {
                             clearInterval(checkCv);
@@ -668,414 +579,128 @@ export default function ScanPage() {
                 }}
             />
 
-            {/* Overlay Header */}
             <header className="fixed top-0 left-0 right-0 px-4 py-4 flex items-center justify-between z-30 pointer-events-none">
                 <Link href="/" className="p-2 rounded-full bg-black/20 backdrop-blur-md hover:bg-black/40 transition-colors pointer-events-auto">
                     <ArrowLeft size={24} />
                 </Link>
                 {scanStage !== 'idle' && (
-                    <button
-                        onClick={handleDiscard}
-                        className="p-2 rounded-full bg-black/20 backdrop-blur-md text-[var(--color-neutral-400)] hover:text-white hover:bg-black/40 transition-colors pointer-events-auto"
-                    >
+                    <button onClick={handleDiscard} className="p-2 rounded-full bg-black/20 backdrop-blur-md text-[var(--color-neutral-400)] hover:text-white hover:bg-black/40 transition-colors pointer-events-auto">
                         <X size={24} />
                     </button>
                 )}
             </header>
 
-            {/* Main Stage - Full Screen on IDLE */}
-            <main className={cn(
-                "flex-1 flex flex-col items-center justify-center z-10 w-full relative",
-                scanStage === 'idle' ? "px-0 pb-0" : "px-4 sm:px-6 pb-24"
-            )}>
-
-                {/* IDLE = Camera View */}
-                <div
-                    className={cn(
-                        "relative w-full shadow-2xl transition-all duration-500 ease-in-out bg-black flex flex-col items-center justify-center",
-                        scanStage === 'idle' ? "h-[100dvh] w-full rounded-0" : "max-w-2xl min-h-[500px] aspect-[9/16] sm:aspect-[3/4] rounded-3xl"
-                    )}
-                    style={scanStage === 'idle' ? { opacity: 1 } : { opacity: 0, position: 'absolute', pointerEvents: 'none' }}
-                >
-                    {scanStage === 'idle' && (
-                        <div className="absolute inset-0 bg-black">
-                            <video
-                                ref={videoRef}
-                                className="w-full h-full object-cover cursor-pointer"
-                                playsInline
-                                muted
-                                autoPlay
-                                onClick={handleTapToFocus}
-                                onTouchStart={handleTapToFocus}
-                            />
-                            {focusPoint && (
-                                <div
-                                    className="absolute w-16 h-16 border-2 border-[var(--color-primary-400)] rounded-md pointer-events-none animate-pulse z-40 transition-all duration-300"
-                                    style={{
-                                        left: focusPoint.x,
-                                        top: focusPoint.y,
-                                        transform: 'translate(-50%, -50%) scale(1.1)',
-                                        boxShadow: '0 0 10px rgba(59, 130, 246, 0.5)'
-                                    }}
-                                />
-                            )}
-
-                            {/* Live Detection Overlay */}
-                            {livePoints && (
-                                <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none z-10 transition-all duration-75">
-                                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%">
-                                        <polygon
-                                            points={livePoints.map((p: any) => `${p.x},${p.y}`).join(' ')}
-                                            fill="rgba(59, 130, 246, 0.2)"
-                                        />
-                                    </svg>
-                                    {livePoints.map((p: any, i: number) => {
-                                        const nextP = livePoints[(i + 1) % 4];
-                                        return (
-                                            <line
-                                                key={`l-${i}`}
-                                                x1={`${p.x}%`} y1={`${p.y}%`}
-                                                x2={`${nextP.x}%`} y2={`${nextP.y}%`}
-                                                stroke="rgba(255, 255, 255, 0.9)"
-                                                strokeWidth="2.5"
-                                            />
-                                        );
-                                    })}
-                                    {livePoints.map((p: any, i: number) => (
-                                        <circle key={`c-${i}`} cx={`${p.x}%`} cy={`${p.y}%`} r="6" fill="white" />
-                                    ))}
-                                </svg>
-                            )}
-
-                            <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center px-8 z-20 gap-8">
-                                <button
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className="p-4 rounded-full bg-black/40 backdrop-blur-md text-white border border-white/20 hover:bg-black/60 transition"
-                                >
-                                    <ImageIcon size={28} />
+            <main className={cn("flex-1 flex flex-col items-center justify-center z-10 w-full relative", scanStage === 'idle' ? "px-0 pb-0" : "px-4 sm:px-6 pb-24")}>
+                {scanStage === 'idle' && (
+                    <div className="relative w-full h-[100dvh] bg-black flex flex-col items-center justify-center">
+                        <video ref={videoRef} className="w-full h-full object-cover cursor-pointer" playsInline muted autoPlay onClick={handleTapToFocus} />
+                        {focusPoint && (
+                            <div className="absolute w-16 h-16 border-2 border-[var(--color-primary-400)] rounded-md pointer-events-none animate-pulse z-40" style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)' }} />
+                        )}
+                        <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center px-8 z-20 gap-8">
+                            <Link href="/" className="p-4 bg-white/10 backdrop-blur-md rounded-full text-white">
+                                <ArrowLeft size={24} />
+                            </Link>
+                            <button onClick={capturePhoto} className="w-20 h-20 bg-white rounded-full border-[6px] border-[var(--color-primary-500)]/30 active:scale-95 transition-all shadow-2xl relative">
+                                <div className="absolute inset-2 bg-[var(--color-primary-600)] rounded-full" />
+                            </button>
+                            <div className="flex flex-col gap-3">
+                                <button onClick={() => fileInputRef.current?.click()} className="p-4 bg-white/10 backdrop-blur-md rounded-full text-white">
+                                    <ImageIcon size={24} />
                                 </button>
-                                <button
-                                    onClick={capturePhoto}
-                                    className="w-20 h-20 rounded-full border-[6px] border-white bg-white/20 shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-105 active:scale-95 transition-transform flex items-center justify-center p-0"
-                                >
-                                    <div className="w-[85%] h-[85%] rounded-full bg-white opacity-90"></div>
-                                    <span className="sr-only">Take photo</span>
-                                </button>
-                                <div className="w-[60px]" /> {/* Spacer for symmetry */}
+                                {availableCameras.length > 1 && (
+                                    <button onClick={() => {
+                                        const currentIndex = availableCameras.findIndex(c => c.deviceId === activeCameraId);
+                                        const nextIndex = (currentIndex + 1) % availableCameras.length;
+                                        setActiveCameraId(availableCameras[nextIndex].deviceId);
+                                        stopCamera();
+                                        setTimeout(startCamera, 100);
+                                    }} className="p-4 bg-[var(--color-primary-600)]/80 backdrop-blur-md rounded-full text-white shadow-lg">
+                                        <RefreshCcw size={24} />
+                                    </button>
+                                )}
                             </div>
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
 
-                {/* CROPPING & RESULT STAGES */}
                 {scanStage !== 'idle' && (
                     <div className="w-full flex-1 flex flex-col items-center justify-center pt-8">
                         <div
                             ref={containerRef}
-                            className={cn(
-                                "relative w-full mx-auto rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 ease-in-out touch-none",
-                                scanStage === 'transforming' ? "scale-95 bg-black" : "bg-[var(--color-neutral-800)] scale-100"
-                            )}
-                            style={{
-                                aspectRatio: imageAspect ? imageAspect : (9 / 16),
-                                maxHeight: '65vh',
-                                maxWidth: imageAspect ? `calc(65vh * ${imageAspect})` : 'calc(65vh * (9/16))'
-                            }}
+                            className={cn("relative w-full mx-auto rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000", scanStage === 'transforming' ? "scale-95 bg-black" : "bg-[var(--color-neutral-800)] scale-100")}
+                            style={{ aspectRatio: imageAspect ? imageAspect : (9 / 16), maxHeight: '65vh', maxWidth: imageAspect ? `calc(65vh * ${imageAspect})` : 'calc(65vh * (9/16))' }}
                             onPointerMove={pointerMoveHandler}
                         >
-                            <div className={cn(
-                                "absolute inset-0 transition-transform duration-1000 ease-out",
-                                (scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital'))
-                                    ? "scale-100 rotate-0 brightness-105 contrast-110"
-                                    : ""
-                            )}>
-                                <img
-                                    src={(scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital')) && transformedImage ? transformedImage : (image || undefined)}
-                                    alt="Scanned diary page"
-                                    className={cn(
-                                        "w-full h-full pointer-events-none transition-all",
-                                        (transformedImage && scanStage !== 'cropping') ? "object-contain bg-black" : "object-fill"
-                                    )}
-                                />
-                            </div>
-
-                            {/* Interactive Cropping Overlay */}
+                            <img src={(scanStage === 'complete' && viewMode === 'digital' && transformedImage) ? transformedImage : (image || '')} alt="Scan" className="w-full h-full object-contain" />
                             {scanStage === 'cropping' && (
                                 <div className="absolute inset-0 z-30">
                                     <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
-                                        {/* Edges with Handles */}
                                         {cropPoints.map((p, i) => {
                                             const nextP = cropPoints[(i + 1) % 4];
-                                            const midX = (p.x + nextP.x) / 2;
-                                            const midY = (p.y + nextP.y) / 2;
-
-                                            // Calculate the start/end points of the handle so it's perfectly in line
-                                            const dx = nextP.x - p.x;
-                                            const dy = nextP.y - p.y;
-                                            const hLen = 0.08; // 8% of the edge length each way (16% total length)
-                                            const hX1 = midX - dx * hLen;
-                                            const hY1 = midY - dy * hLen;
-                                            const hX2 = midX + dx * hLen;
-                                            const hY2 = midY + dy * hLen;
-
                                             return (
-                                                <g key={`edge-${i}`}>
-                                                    {/* The thin solid connecting line */}
-                                                    <line
-                                                        x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
-                                                        stroke="rgba(255, 255, 255, 0.9)" strokeWidth="2.5"
-                                                        className="pointer-events-none drop-shadow-md"
-                                                    />
-                                                    {/* Thick invisible interaction line */}
-                                                    <line
-                                                        x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
-                                                        stroke="transparent" strokeWidth="40"
-                                                        className="cursor-move pointer-events-auto touch-none"
-                                                        onPointerDown={(e) => {
-                                                            e.preventDefault();
-                                                            setActiveElement(`e${i}`);
-                                                            if (containerRef.current) {
-                                                                const r = containerRef.current.getBoundingClientRect();
-                                                                lastPointerPos.current = {
-                                                                    x: ((e.clientX - r.left) / r.width) * 100,
-                                                                    y: ((e.clientY - r.top) / r.height) * 100
-                                                                };
-                                                            }
-                                                            e.currentTarget.setPointerCapture(e.pointerId);
-                                                        }}
-                                                        onPointerUp={pointerUpHandler} onPointerCancel={pointerUpHandler}
-                                                    />
-                                                    {/* Visual Handle - The White Bar perfectly sloped */}
-                                                    <line
-                                                        x1={`${hX1}%`} y1={`${hY1}%`} x2={`${hX2}%`} y2={`${hY2}%`}
-                                                        stroke="white" strokeWidth="6" strokeLinecap="round"
-                                                        className="pointer-events-none drop-shadow-md"
-                                                    />
+                                                <g key={i}>
+                                                    <line x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`} stroke="white" strokeWidth="2" />
+                                                    <circle cx={`${p.x}%`} cy={`${p.y}%`} r="10" fill="white" className="pointer-events-auto cursor-move" onPointerDown={() => setActiveElement(i)} onPointerUp={pointerUpHandler} />
                                                 </g>
                                             );
                                         })}
-
-                                        {/* Corners */}
-                                        {cropPoints.map((p, i) => (
-                                            <circle
-                                                key={i}
-                                                cx={`${p.x}%`}
-                                                cy={`${p.y}%`}
-                                                r="32"
-                                                fill="transparent"
-                                                className="cursor-pointer pointer-events-auto touch-none"
-                                                onPointerDown={(e) => {
-                                                    e.preventDefault();
-                                                    setActiveElement(i);
-                                                    e.currentTarget.setPointerCapture(e.pointerId);
-                                                }}
-                                                onPointerUp={pointerUpHandler}
-                                                onPointerCancel={pointerUpHandler}
-                                            />
-                                        ))}
-                                        {/* Visual inner dot */}
-                                        {cropPoints.map((p, i) => (
-                                            <circle
-                                                key={`vis-${i}`}
-                                                cx={`${p.x}%`}
-                                                cy={`${p.y}%`}
-                                                r="10"
-                                                fill="white"
-                                                stroke="rgba(0,0,0,0.3)"
-                                                strokeWidth="1"
-                                                className="pointer-events-none drop-shadow-md"
-                                            />
-                                        ))}
                                     </svg>
-
-                                    {activeElement !== null && (
-                                        <div
-                                            className={cn(
-                                                "absolute w-36 h-36 rounded-2xl shadow-[0_12px_48px_rgba(0,0,0,0.7)] overflow-hidden pointer-events-none z-50 bg-black transition-opacity duration-200 border-2 border-white/50",
-                                                activeElement !== null ? "opacity-100" : "opacity-0"
-                                            )}
-                                            style={{
-                                                left: `${Math.min(Math.max(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2, 25), 75)}%`,
-                                                top: `${Math.max((typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) - 30, 20)}%`,
-                                                transform: 'translate(-50%, -100%)'
-                                            }}
-                                        >
-                                            <div className="w-full h-full relative">
-                                                <img
-                                                    src={image as string}
-                                                    className="absolute max-w-none w-[800%] h-[800%] object-fill"
-                                                    style={{
-                                                        left: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].x : (cropPoints[parseInt(activeElement.charAt(1))].x + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].x) / 2) * 8 - 50}%`,
-                                                        top: `-${(typeof activeElement === 'number' ? cropPoints[activeElement].y : (cropPoints[parseInt(activeElement.charAt(1))].y + cropPoints[(parseInt(activeElement.charAt(1)) + 1) % 4].y) / 2) * 8 - 50}%`,
-                                                    }}
-                                                    alt=""
-                                                />
-                                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                                    <div className="w-[1px] h-full bg-white/30" />
-                                                    <div className="absolute w-full h-[1px] bg-white/30" />
-                                                    <div className="w-2 h-2 rounded-full border border-white/50 bg-[var(--color-primary-500)]" />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
                                 </div>
-                            )}
-
-                            {/* Processing Overlay */}
-                            {scanStage === 'analyzing' && (
-                                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px]">
-                                    <div className="w-20 h-20 relative mb-6">
-                                        <div className="absolute inset-0 border-4 border-[var(--color-primary-500)] rounded-full animate-ping opacity-30"></div>
-                                        <div className="absolute inset-0 border-4 border-t-[var(--color-primary-500)] rounded-full animate-spin"></div>
-                                    </div>
-                                    <p className="font-semibold text-lg flex items-center gap-2 animate-pulse text-white drop-shadow-md">
-                                        <Sparkles size={20} className="text-[var(--color-primary-400)]" />
-                                        {t('statusAnalyzing')}
-                                    </p>
-                                </div>
-                            )}
-                            {scanStage === 'analyzing' && (
-                                <div
-                                    className="absolute top-0 left-0 w-full h-1 bg-[var(--color-primary-500)] z-20"
-                                    style={{ boxShadow: '0 0 15px var(--color-primary-500)', animation: 'scan 2s ease-in-out infinite' }}
-                                />
                             )}
                         </div>
-
-                        {/* External Control Bar */}
                         {scanStage === 'cropping' && (
-                            <div className="w-full max-w-sm mx-auto flex justify-between gap-4 mt-8 pointer-events-auto">
-                                <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-[var(--color-neutral-800)] text-white hover:bg-[var(--color-neutral-700)] backdrop-blur-md border border-white/20 py-6 text-lg rounded-2xl shadow-xl font-semibold">
-                                    {t('btnDiscard')}
-                                </Button>
-                                <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-[0_8px_32px_rgba(245,158,11,0.4)] text-lg rounded-2xl font-bold border border-white/10 mt-0">
-                                    {t('btnConfirmCrop')}
-                                </Button>
+                            <div className="w-full max-w-sm mx-auto flex justify-between gap-4 mt-8">
+                                <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-[var(--color-neutral-800)] text-white">Discard</Button>
+                                <Button onClick={confirmCrop} variant="primary" className="flex-1 font-bold">Confirm</Button>
                             </div>
                         )}
                     </div>
                 )}
-
-                <input type="file" accept="image/*" className="sr-only" ref={fileInputRef} onChange={handleFileSelect} />
-                <canvas ref={canvasRef} className="hidden" />
             </main>
 
-            {/* Result Panel */}
-            {
-                scanStage === 'complete' && result && (
-                    <div className="p-4 sm:p-6 bg-[var(--color-neutral-800)] rounded-t-3xl min-h-[200px] border-t border-[var(--color-neutral-700)] z-10 relative mt-[-2rem]">
-                        <div className="space-y-4 animate-fade-in-up">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="flex items-center gap-2 text-[var(--color-success-500)]">
-                                    <Check size={20} strokeWidth={3} />
-                                    <span className="font-bold text-lg">{t('statusComplete')}</span>
-                                </div>
-
-                                <div className="flex bg-[var(--color-neutral-900)] rounded-lg p-1 border border-[var(--color-neutral-700)]">
-                                    <button
-                                        onClick={() => setViewMode('original')}
-                                        className={cn(
-                                            "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
-                                            viewMode === 'original' ? "bg-[var(--color-primary-600)] text-white shadow-sm" : "text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-200)]"
-                                        )}
-                                    >
-                                        {t('viewOriginal')}
-                                    </button>
-                                    <button
-                                        onClick={() => setViewMode('digital')}
-                                        className={cn(
-                                            "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
-                                            viewMode === 'digital' ? "bg-[var(--color-primary-600)] text-white shadow-sm" : "text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-200)]"
-                                        )}
-                                    >
-                                        {t('viewDigital')}
-                                    </button>
+            {scanStage === 'complete' && result && (
+                <div className="fixed bottom-0 left-0 right-0 p-6 bg-[var(--color-neutral-800)] rounded-t-3xl border-t border-[var(--color-neutral-700)] z-20 overflow-y-auto max-h-[80vh]">
+                    <div className="space-y-4">
+                        <div className="flex bg-[var(--color-neutral-900)] rounded-lg p-1 mb-4">
+                            <button onClick={() => setViewMode('original')} className={cn("flex-1 py-1.5 text-sm rounded-md", viewMode === 'original' ? "bg-[var(--color-primary-600)] text-white" : "text-[var(--color-neutral-400)]")}>Original</button>
+                            <button onClick={() => setViewMode('digital')} className={cn("flex-1 py-1.5 text-sm rounded-md", viewMode === 'digital' ? "bg-[var(--color-primary-600)] text-white" : "text-[var(--color-neutral-400)]")}>Digital</button>
+                        </div>
+                        {viewMode === 'digital' && (
+                            <div className="bg-[var(--color-neutral-700)] p-6 rounded-xl space-y-4">
+                                <input type="date" className="bg-transparent text-sm text-white border border-[var(--color-neutral-600)] rounded px-2 py-1" value={result.logDate || ''} onChange={(e) => setResult({ ...result!, logDate: e.target.value })} />
+                                <textarea className="w-full bg-transparent text-white italic border-b border-[var(--color-neutral-600)] outline-none" value={result.summary} onChange={(e) => setResult({ ...result!, summary: e.target.value })} />
+                                <div className="space-y-2">
+                                    {result.events.map((ev, i) => (
+                                        <div key={i} className="flex justify-between text-sm border-b border-[var(--color-neutral-600)] pb-1">
+                                            <input className="bg-transparent text-[var(--color-neutral-400)] outline-none" value={ev.time} onChange={(e) => {
+                                                const newEvs = [...result.events];
+                                                newEvs[i] = { ...newEvs[i], time: e.target.value };
+                                                setResult({ ...result!, events: newEvs });
+                                            }} />
+                                            <input className="bg-transparent text-white text-right outline-none" value={ev.title} onChange={(e) => {
+                                                const newEvs = [...result.events];
+                                                newEvs[i] = { ...newEvs[i], title: e.target.value };
+                                                setResult({ ...result!, events: newEvs });
+                                            }} />
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
-
-                            {viewMode === 'digital' && (
-                                <div className="bg-[var(--color-neutral-700)] p-6 rounded-xl border border-[var(--color-neutral-600)] animate-fade-in">
-                                    <div className="flex items-center gap-2 mb-4">
-                                        <Sparkles size={16} className="text-[var(--color-primary-400)]" />
-                                        <input
-                                            type="date"
-                                            className="bg-transparent text-sm font-medium text-[var(--color-neutral-300)] border border-[var(--color-neutral-600)] rounded px-2 py-1 outline-none focus:border-[var(--color-primary-500)]"
-                                            value={result.logDate || new Date().toISOString().split('T')[0]}
-                                            onChange={(e) => setResult({ ...result, logDate: e.target.value })}
-                                        />
-                                    </div>
-                                    <textarea
-                                        className="text-base text-[var(--color-neutral-200)] italic mb-4 leading-relaxed bg-transparent border border-transparent hover:border-[var(--color-neutral-600)] focus:border-[var(--color-primary-500)] focus:bg-[var(--color-neutral-800)] rounded-md w-full resize-none outline-none py-1 px-2 transition-all"
-                                        value={result.summary}
-                                        onChange={(e) => setResult({ ...result, summary: e.target.value })}
-                                        rows={2}
-                                    />
-                                    <div className="flex gap-2 mb-6 flex-wrap">
-                                        {result.tags.map((tag: string, i: number) => (
-                                            <div key={i} className="flex items-center bg-[var(--color-info-50)]/10 text-[var(--color-info-300)] border border-[var(--color-info-500)]/30 rounded-full px-2 py-0.5">
-                                                <span className="mr-1">#</span>
-                                                <input
-                                                    className="bg-transparent outline-none w-20 text-sm focus:w-auto transition-all"
-                                                    value={tag}
-                                                    onChange={(e) => {
-                                                        const newTags = [...result.tags];
-                                                        newTags[i] = e.target.value;
-                                                        setResult({ ...result, tags: newTags });
-                                                    }}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="space-y-3">
-                                        <h3 className="text-sm font-semibold text-[var(--color-neutral-400)] uppercase tracking-wider">Detected Events</h3>
-                                        {result.events.map((event: any, index: number) => (
-                                            <div key={index} className="flex flex-col sm:flex-row sm:items-center gap-2 pb-3 border-b border-[var(--color-neutral-600)] last:border-0 last:pb-0">
-                                                <input
-                                                    className="w-full sm:w-1/3 bg-transparent text-[var(--color-neutral-400)] text-sm border border-transparent hover:border-[var(--color-neutral-600)] focus:border-[var(--color-primary-500)] focus:bg-[var(--color-neutral-800)] rounded px-1 outline-none transition-all"
-                                                    value={event.time}
-                                                    onChange={(e) => {
-                                                        const newEvts = [...result.events];
-                                                        newEvts[index] = { ...newEvts[index], time: e.target.value };
-                                                        setResult({ ...result, events: newEvts });
-                                                    }}
-                                                />
-                                                <input
-                                                    className="w-full flex-1 bg-transparent font-medium text-[var(--color-neutral-50)] text-sm sm:text-right border border-transparent hover:border-[var(--color-neutral-600)] focus:border-[var(--color-primary-500)] focus:bg-[var(--color-neutral-800)] rounded px-1 outline-none transition-all"
-                                                    value={event.title}
-                                                    onChange={(e) => {
-                                                        const newEvts = [...result.events];
-                                                        newEvts[index] = { ...newEvts[index], title: e.target.value };
-                                                        setResult({ ...result, events: newEvts });
-                                                    }}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="flex gap-3">
-                                <Button variant="ghost" size="lg" onClick={handleDiscard} className="flex-1 text-[var(--color-neutral-300)] hover:text-[var(--color-neutral-50)]">
-                                    {t('btnDiscard')}
-                                </Button>
-                                <Button variant="primary" size="lg" onClick={handleSave} className="flex-1">
-                                    {t('btnSaveLog')}
-                                </Button>
-                            </div>
+                        )}
+                        <div className="flex gap-3">
+                            <Button variant="ghost" className="flex-1" onClick={handleDiscard}>Discard</Button>
+                            <Button variant="primary" className="flex-1" onClick={handleSave}>Save</Button>
                         </div>
                     </div>
-                )
-            }
+                </div>
+            )}
 
+            <input type="file" accept="image/*" className="sr-only" ref={fileInputRef} onChange={handleFileSelect} />
+            <canvas ref={canvasRef} className="hidden" />
             <style jsx global>{`
-                @keyframes scan {
-                    0% { top: 0%; opacity: 0; }
-                    10% { opacity: 1; }
-                    90% { opacity: 1; }
-                    100% { top: 100%; opacity: 0; }
-                }
+                @keyframes scan { 0% { top: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
             `}</style>
-        </div >
+        </div>
     );
 }
