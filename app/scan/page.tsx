@@ -427,7 +427,9 @@ export default function ScanPage() {
             title: result.summary.length > 30 ? result.summary.substring(0, 30) + "..." : result.summary,
             timestamp: new Date(),
             eventCount: result.events.length || 1,
-            // Additional scan data can be stored here
+            summary: result.summary,
+            tags: result.tags,
+            events: result.events
         };
 
         if (user) {

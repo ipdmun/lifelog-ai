@@ -11,7 +11,7 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { ChartCard } from "@/components/dashboard/ChartCard";
 import { Button } from "@/components/ui/Button";
 import { LogTimeline, LogItem } from "@/components/dashboard/LogTimeline";
-import { Card, CardContent } from "@/components/ui/Card";
+import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
@@ -101,6 +101,7 @@ export default function DashboardPage() {
     const [lifeBalanceData, setLifeBalanceData] = useState<any[]>([]);
     const [moodTrendData, setMoodTrendData] = useState<any[]>([]);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [selectedLog, setSelectedLog] = useState<LogItem | null>(null);
 
     // Sync localStorage to Firestore when user logs in
     useEffect(() => {
@@ -410,12 +411,68 @@ export default function DashboardPage() {
                             {t('recentActivity')}
                         </h2>
                         <div className="bg-white rounded-2xl p-6 border border-[var(--color-neutral-200)] shadow-sm">
-                            <LogTimeline logs={recentLogs} />
+                            <LogTimeline logs={recentLogs} onLogClick={(log) => setSelectedLog(log)} />
                         </div>
                     </div>
                 </div>
             </main>
             <Footer />
+
+            {/* Log Details Modal */}
+            {selectedLog && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+                    <Card variant="elevated" className="w-full max-w-lg bg-white overflow-hidden shadow-2xl">
+                        <CardHeader className="border-b border-[var(--color-neutral-100)] flex justify-between items-center bg-[var(--color-neutral-50)]/50">
+                            <div>
+                                <Badge variant={selectedLog.type === 'digital' ? 'primary' : 'outline'} className="mb-2">
+                                    {selectedLog.type === 'digital' ? 'Digital Appt' : 'Analog Scan'}
+                                </Badge>
+                                <h3 className="text-lg font-bold text-[var(--color-neutral-900)] max-w-[280px] sm:max-w-[400px] truncate">
+                                    {selectedLog.summary || selectedLog.title}
+                                </h3>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="max-h-[60vh] overflow-y-auto p-6 space-y-4">
+                            {selectedLog.tags && selectedLog.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                    {selectedLog.tags.map(t => (
+                                        <Badge key={t} variant="success" className="bg-[var(--color-primary-50)] text-[var(--color-primary-700)] border border-[var(--color-primary-100)]">
+                                            #{t}
+                                        </Badge>
+                                    ))}
+                                </div>
+                            )}
+
+                            {selectedLog.events && selectedLog.events.length > 0 ? (
+                                <div className="space-y-3">
+                                    <h4 className="text-sm font-semibold text-[var(--color-neutral-500)] tracking-wider">DETECTED EVENTS</h4>
+                                    <ul className="space-y-2">
+                                        {selectedLog.events.map((evt, idx) => (
+                                            <li key={idx} className="flex justify-between items-start gap-4 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-[var(--color-neutral-100)]">
+                                                <span className="text-sm text-[var(--color-neutral-600)] font-medium leading-relaxed max-w-[40%] flex-shrink-0">
+                                                    {evt.time}
+                                                </span>
+                                                <span className="text-sm font-bold text-[var(--color-neutral-900)] text-right break-words leading-relaxed flex-1">
+                                                    {evt.title}
+                                                </span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ) : (
+                                <div className="py-6 text-center text-[var(--color-neutral-500)] italic border border-dashed border-[var(--color-neutral-200)] rounded-xl">
+                                    No detailed events captured.
+                                </div>
+                            )}
+                        </CardContent>
+                        <div className="p-4 border-t border-[var(--color-neutral-100)] bg-[var(--color-neutral-50)]/50">
+                            <Button fullWidth onClick={() => setSelectedLog(null)} variant="primary">
+                                Close
+                            </Button>
+                        </div>
+                    </Card>
+                </div>
+            )}
         </div>
     );
 }

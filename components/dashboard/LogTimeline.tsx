@@ -11,6 +11,9 @@ export interface LogItem {
   title: string;
   timestamp: Date;
   eventCount?: number;
+  summary?: string;
+  tags?: string[];
+  events?: Array<{ time: string; title: string }>;
 }
 
 export interface LogTimelineProps {

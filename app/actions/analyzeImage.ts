@@ -18,14 +18,20 @@ export async function analyzeImageWithAI(base64Image: string, locale: string) {
 You are an advanced document analysis AI. 
 I am sending you an image of a document (e.g., passport, receipt, business card, notebook).
 Your task is to extract its key information, understand the context, and respond in JSON format.
-Language preference for the output: ${locale === 'ko' ? 'Korean' : locale === 'jp' ? 'Japanese' : 'English'}.
+
+CRITICAL INSTRUCTION FOR LANGUAGE:
+- Do NOT translate the text written in the document. 
+- If the document is written in English, extract it in English.
+- If it is written in Korean, extract it in Korean.
+- The "summary" and "tags" should be in ${locale === 'ko' ? 'Korean' : locale === 'jp' ? 'Japanese' : 'English'}.
+- However, the "title" and "time" values in the "events" array MUST strictly be in the original language exactly as written in the image.
 
 Follow this JSON structure exactly:
 {
   "summary": "A clear, concice single-sentence title or summary of what this document is (e.g., 'Republic of Korea Passport', 'Starbucks Coffee Receipt', 'Handwritten meeting notes')",
   "events": [
-    {"time": "Field Name 1", "title": "Value 1 (e.g. Name, Date, Total Amount)"},
-    {"time": "Field Name 2", "title": "Value 2"}
+    {"time": "Field Name 1", "title": "Original Value exactly as written (e.g. Name, Date, Amount)"},
+    {"time": "Field Name 2", "title": "Original Value 2"}
   ],
   "sentiment": "Neutral (or Positive/Negative if it's a mood diary)",
   "tags": ["Tag1", "Tag2"]
