@@ -41,6 +41,7 @@ export default function ScanPage() {
     const [result, setResult] = useState<ScanResult | null>(null);
     const [transformedImage, setTransformedImage] = useState<string | null>(null);
     const [cvReady, setCvReady] = useState(false);
+    const [imageAspect, setImageAspect] = useState<number | null>(null);
 
     const { capturedImage, triggerNativeCamera } = useScanConfig();
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -64,6 +65,7 @@ export default function ScanPage() {
                     const img = new Image();
                     img.src = capturedImage;
                     await new Promise((resolve) => { img.onload = resolve; });
+                    setImageAspect(img.width / img.height);
 
                     const canvas = document.createElement('canvas');
                     const scale = Math.min(1000 / Math.max(img.width, img.height), 1);
@@ -138,11 +140,17 @@ export default function ScanPage() {
             const file = e.target.files[0];
             const reader = new FileReader();
             reader.onload = (e) => {
-                setImage(e.target?.result as string);
-                setCropPoints([
-                    { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
-                ]);
-                setScanStage('cropping');
+                const imgSource = e.target?.result as string;
+                setImage(imgSource);
+                const img = new Image();
+                img.src = imgSource;
+                img.onload = () => {
+                    setImageAspect(img.width / img.height);
+                    setCropPoints([
+                        { x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }
+                    ]);
+                    setScanStage('cropping');
+                }
             };
             reader.readAsDataURL(file);
         }
@@ -400,9 +408,14 @@ export default function ScanPage() {
                         <div
                             ref={containerRef}
                             className={cn(
-                                "relative w-full max-w-[calc(65vh*9/16)] sm:max-w-md max-h-[65vh] mx-auto aspect-[9/16] sm:aspect-[3/4] rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 ease-in-out touch-none",
+                                "relative w-full mx-auto rounded-3xl overflow-hidden shadow-2xl transition-all duration-1000 ease-in-out touch-none",
                                 scanStage === 'transforming' ? "scale-95 bg-black" : "bg-[var(--color-neutral-800)] scale-100"
                             )}
+                            style={{
+                                aspectRatio: imageAspect ? imageAspect : (9 / 16),
+                                maxHeight: '65vh',
+                                maxWidth: imageAspect ? `calc(65vh * ${imageAspect})` : 'calc(65vh * (9/16))'
+                            }}
                             onPointerMove={pointerMoveHandler}
                         >
                             <div className={cn(
@@ -414,7 +427,10 @@ export default function ScanPage() {
                                 <img
                                     src={(scanStage === 'transforming' || scanStage === 'analyzing' || (scanStage === 'complete' && viewMode === 'digital')) && transformedImage ? transformedImage : (image || undefined)}
                                     alt="Scanned diary page"
-                                    className="w-full h-full object-fill pointer-events-none"
+                                    className={cn(
+                                        "w-full h-full pointer-events-none transition-all",
+                                        (transformedImage && scanStage !== 'cropping') ? "object-contain bg-black" : "object-fill"
+                                    )}
                                 />
                             </div>
 
