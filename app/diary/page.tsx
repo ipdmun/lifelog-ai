@@ -274,9 +274,28 @@ export default function DiaryPage() {
                     <Card variant="elevated" className="w-full max-w-lg bg-white overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
                         <CardHeader className="border-b border-[var(--color-neutral-100)] flex justify-between items-center bg-[var(--color-neutral-50)]/50 shrink-0">
                             <div className="flex-1 mr-4 overflow-hidden">
-                                <Badge variant={selectedLog.type === 'digital' ? 'primary' : 'outline'} className="mb-2">
-                                    {selectedLog.type === 'digital' ? 'Digital Appt' : 'Analog Scan'}
-                                </Badge>
+                                <div className="flex items-center gap-3 mb-2">
+                                    <Badge variant={selectedLog.type === 'digital' ? 'primary' : 'outline'}>
+                                        {selectedLog.type === 'digital' ? 'Digital Appt' : 'Analog Scan'}
+                                    </Badge>
+                                    {selectedLog.type === 'analog' && (
+                                        <input
+                                            type="date"
+                                            className="text-sm font-medium text-[var(--color-neutral-600)] bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-0.5 outline-none cursor-text"
+                                            value={editLogData?.timestamp ? new Date(new Date(editLogData.timestamp).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().split('T')[0] : ''}
+                                            onChange={(e) => {
+                                                if (e.target.value) {
+                                                    // Maintain the same time, just change the date
+                                                    const newDate = new Date(e.target.value);
+                                                    const oldDate = new Date(editLogData?.timestamp || new Date());
+                                                    newDate.setHours(oldDate.getHours(), oldDate.getMinutes(), oldDate.getSeconds());
+                                                    setEditLogData(prev => ({ ...prev!, timestamp: newDate }));
+                                                }
+                                            }}
+                                            title="Scan Date"
+                                        />
+                                    )}
+                                </div>
                                 {selectedLog.type === 'analog' ? (
                                     <input
                                         type="text"
