@@ -481,17 +481,29 @@ export default function DashboardPage() {
                                     <ul className="space-y-3">
                                         {(editLogData?.events || []).map((evt, idx) => (
                                             <li key={idx} className="flex flex-col gap-2 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-transparent hover:border-[var(--color-neutral-200)] focus-within:border-[var(--color-neutral-300)] focus-within:bg-white transition-colors">
-                                                <input
-                                                    type="text"
-                                                    className="text-sm text-[var(--color-neutral-600)] font-medium bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-0.5 w-full outline-none cursor-text"
-                                                    value={evt.time}
-                                                    onChange={(e) => {
-                                                        const newEvts = [...(editLogData?.events || [])];
-                                                        newEvts[idx] = { ...newEvts[idx], time: e.target.value };
-                                                        setEditLogData(prev => ({ ...prev!, events: newEvts }));
-                                                    }}
-                                                    placeholder="Time/Field"
-                                                />
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        type="date"
+                                                        className="text-sm text-[var(--color-neutral-600)] font-medium bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-0.5 w-[130px] outline-none cursor-text"
+                                                        value={evt.date || ''}
+                                                        onChange={(e) => {
+                                                            const newEvts = [...(editLogData?.events || [])];
+                                                            newEvts[idx] = { ...newEvts[idx], date: e.target.value };
+                                                            setEditLogData(prev => ({ ...prev!, events: newEvts }));
+                                                        }}
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        className="text-sm text-[var(--color-neutral-600)] font-medium bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-0.5 flex-1 outline-none cursor-text"
+                                                        value={evt.time}
+                                                        onChange={(e) => {
+                                                            const newEvts = [...(editLogData?.events || [])];
+                                                            newEvts[idx] = { ...newEvts[idx], time: e.target.value };
+                                                            setEditLogData(prev => ({ ...prev!, events: newEvts }));
+                                                        }}
+                                                        placeholder="Time/Field"
+                                                    />
+                                                </div>
                                                 <textarea
                                                     className="text-sm font-bold text-[var(--color-neutral-900)] bg-transparent border border-transparent hover:border-[var(--color-neutral-200)] focus:bg-white focus:border-[var(--color-neutral-300)] rounded-md px-1 py-0.5 w-full resize-none min-h-[40px] outline-none cursor-text"
                                                     value={evt.title}
@@ -509,13 +521,20 @@ export default function DashboardPage() {
                                     selectedLog.events && selectedLog.events.length > 0 ? (
                                         <ul className="space-y-2">
                                             {selectedLog.events.map((evt, idx) => (
-                                                <li key={idx} className="flex justify-between items-start gap-4 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-[var(--color-neutral-100)]">
-                                                    <span className="text-sm text-[var(--color-neutral-600)] font-medium leading-relaxed max-w-[40%] flex-shrink-0">
-                                                        {evt.time}
-                                                    </span>
-                                                    <span className="text-sm font-bold text-[var(--color-neutral-900)] text-right break-words leading-relaxed flex-1">
-                                                        {evt.title}
-                                                    </span>
+                                                <li key={idx} className="flex flex-col gap-1 p-3 rounded-lg bg-[var(--color-neutral-50)] border border-[var(--color-neutral-100)]">
+                                                    {evt.date && (
+                                                        <span className="text-xs font-semibold text-[var(--color-primary-600)]">
+                                                            {evt.date}
+                                                        </span>
+                                                    )}
+                                                    <div className="flex justify-between items-start gap-4">
+                                                        <span className="text-sm text-[var(--color-neutral-600)] font-medium leading-relaxed max-w-[40%] flex-shrink-0">
+                                                            {evt.time}
+                                                        </span>
+                                                        <span className="text-sm font-bold text-[var(--color-neutral-900)] text-right break-words leading-relaxed flex-1">
+                                                            {evt.title}
+                                                        </span>
+                                                    </div>
                                                 </li>
                                             ))}
                                         </ul>

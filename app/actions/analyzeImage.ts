@@ -30,8 +30,8 @@ Follow this JSON structure exactly:
 {
   "summary": "A clear, concice single-sentence title or summary of what this document is (e.g., 'Republic of Korea Passport', 'Starbucks Coffee Receipt', 'Handwritten meeting notes')",
   "events": [
-    {"time": "Field Name 1", "title": "Original Value exactly as written (e.g. Name, Date, Amount)"},
-    {"time": "Field Name 2", "title": "Original Value 2"}
+    {"time": "Field Name 1", "title": "Original Value exactly as written (e.g. Name, Date, Amount)", "date": "YYYY-MM-DD (Parse out the strict date ONLY if a specific real date is implicitly/explicitly mentioned or meant. Otherwise omit or null)"},
+    {"time": "Field Name 2", "title": "Original Value 2", "date": "..."}
   ],
   "sentiment": "Neutral (or Positive/Negative if it's a mood diary)",
   "tags": ["Tag1", "Tag2"]

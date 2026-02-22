@@ -13,7 +13,7 @@ export interface LogItem {
   eventCount?: number;
   summary?: string;
   tags?: string[];
-  events?: Array<{ time: string; title: string }>;
+  events?: Array<{ time: string; title: string; date?: string; }>;
 }
 
 export interface LogTimelineProps {
