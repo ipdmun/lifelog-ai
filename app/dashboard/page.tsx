@@ -433,7 +433,7 @@ export default function DashboardPage() {
                             {t('recentActivity')}
                         </h2>
                         <div className="bg-white rounded-2xl p-6 border border-[var(--color-neutral-200)] shadow-sm">
-                            <LogTimeline logs={recentLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(log); }} />
+                            <LogTimeline logs={recentLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }} />
                         </div>
                     </div>
                 </div>
@@ -487,7 +487,7 @@ export default function DashboardPage() {
                                                     value={evt.time}
                                                     onChange={(e) => {
                                                         const newEvts = [...(editLogData?.events || [])];
-                                                        newEvts[idx].time = e.target.value;
+                                                        newEvts[idx] = { ...newEvts[idx], time: e.target.value };
                                                         setEditLogData(prev => ({ ...prev!, events: newEvts }));
                                                     }}
                                                     placeholder="Time/Field"
@@ -497,7 +497,7 @@ export default function DashboardPage() {
                                                     value={evt.title}
                                                     onChange={(e) => {
                                                         const newEvts = [...(editLogData?.events || [])];
-                                                        newEvts[idx].title = e.target.value;
+                                                        newEvts[idx] = { ...newEvts[idx], title: e.target.value };
                                                         setEditLogData(prev => ({ ...prev!, events: newEvts }));
                                                     }}
                                                     placeholder="Extracted Text..."
@@ -530,7 +530,7 @@ export default function DashboardPage() {
                         <div className="p-4 border-t border-[var(--color-neutral-100)] bg-[var(--color-neutral-50)]/50 flex gap-3">
                             {hasChanges ? (
                                 <>
-                                    <Button fullWidth onClick={() => setEditLogData(selectedLog)} variant="outline">
+                                    <Button fullWidth onClick={() => setEditLogData(JSON.parse(JSON.stringify(selectedLog)))} variant="outline">
                                         Undo Changes
                                     </Button>
                                     <Button fullWidth onClick={handleSaveLogEdit} variant="primary">

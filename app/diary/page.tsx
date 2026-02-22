@@ -119,7 +119,7 @@ export default function DiaryPage() {
 
                     <div className="bg-white rounded-2xl p-6 border border-[var(--color-neutral-200)] shadow-sm min-h-[500px]">
                         {allLogs.length > 0 ? (
-                            <LogTimeline logs={allLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(log); }} />
+                            <LogTimeline logs={allLogs} onLogClick={(log) => { setSelectedLog(log); setEditLogData(JSON.parse(JSON.stringify(log))); }} />
                         ) : (
                             <div className="flex items-center justify-center h-[400px] text-[var(--color-neutral-500)] italic">
                                 No diary entries found yet. Upload calendar or scan notes to get started!
@@ -178,7 +178,7 @@ export default function DiaryPage() {
                                                     value={evt.time}
                                                     onChange={(e) => {
                                                         const newEvts = [...(editLogData?.events || [])];
-                                                        newEvts[idx].time = e.target.value;
+                                                        newEvts[idx] = { ...newEvts[idx], time: e.target.value };
                                                         setEditLogData(prev => ({ ...prev!, events: newEvts }));
                                                     }}
                                                     placeholder="Time/Field"
@@ -188,7 +188,7 @@ export default function DiaryPage() {
                                                     value={evt.title}
                                                     onChange={(e) => {
                                                         const newEvts = [...(editLogData?.events || [])];
-                                                        newEvts[idx].title = e.target.value;
+                                                        newEvts[idx] = { ...newEvts[idx], title: e.target.value };
                                                         setEditLogData(prev => ({ ...prev!, events: newEvts }));
                                                     }}
                                                     placeholder="Extracted Text..."
@@ -222,7 +222,7 @@ export default function DiaryPage() {
                         <div className="p-4 border-t border-[var(--color-neutral-100)] bg-[var(--color-neutral-50)]/50 flex gap-3 shrink-0">
                             {hasChanges ? (
                                 <>
-                                    <Button fullWidth onClick={() => setEditLogData(selectedLog)} variant="outline">
+                                    <Button fullWidth onClick={() => setEditLogData(JSON.parse(JSON.stringify(selectedLog)))} variant="outline">
                                         Undo Changes
                                     </Button>
                                     <Button fullWidth onClick={handleSaveLogEdit} variant="primary">

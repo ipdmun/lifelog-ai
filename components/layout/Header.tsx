@@ -150,14 +150,17 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="hidden md:flex items-center gap-3">
           <LanguageSwitcher />
 
+          <div className="flex items-center gap-4 mr-4">
+            <Link href="/dashboard" className="text-sm font-semibold text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] hidden sm:block">
+              {t('btnDashboard')}
+            </Link>
+            <Link href="/diary" className="text-sm font-semibold text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] hidden sm:block">
+              Diary
+            </Link>
+          </div>
+
           {user ? (
             <div className="flex items-center gap-3">
-              <Link href="/dashboard" className="text-sm font-semibold text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] hidden sm:block">
-                Dashboard
-              </Link>
-              <Link href="/diary" className="text-sm font-semibold text-[var(--color-primary-600)] hover:text-[var(--color-primary-700)] hidden sm:block">
-                Diary
-              </Link>
               <div className="flex items-center gap-3 bg-[var(--color-neutral-100)] p-1 pr-3 rounded-full border border-[var(--color-neutral-200)] ml-2">
                 <div className="w-8 h-8 rounded-full bg-[var(--color-primary-600)] flex items-center justify-center text-white overflow-hidden">
                   {user.photoURL ? (
@@ -180,13 +183,6 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           ) : (
             <>
-              {secondaryAction && (
-                <Link href={secondaryAction.href}>
-                  <Button variant="ghost" size="md">
-                    {t('btnDashboard')}
-                  </Button>
-                </Link>
-              )}
               <Button variant="primary" size="md" onClick={() => setIsLoginModalOpen(true)}>
                 {t('btnGetStarted')}
               </Button>
@@ -253,40 +249,29 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="flex justify-start px-2">
                   <LanguageSwitcher />
                 </div>
+                <Link
+                  href="/dashboard"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="block"
+                >
+                  <Button variant="outline" size="lg" fullWidth>
+                    {t('btnDashboard')}
+                  </Button>
+                </Link>
+                <Link
+                  href="/diary"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="block"
+                >
+                  <Button variant="outline" size="lg" fullWidth>
+                    Diary
+                  </Button>
+                </Link>
+
                 {user ? (
-                  <>
-                    <Link
-                      href="/dashboard"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="block"
-                    >
-                      <Button variant="outline" size="lg" fullWidth>
-                        Dashboard
-                      </Button>
-                    </Link>
-                    <Link
-                      href="/diary"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="block"
-                    >
-                      <Button variant="outline" size="lg" fullWidth>
-                        Diary
-                      </Button>
-                    </Link>
-                  </>
+                  <></>
                 ) : (
                   <>
-                    {secondaryAction && (
-                      <Link
-                        href={secondaryAction.href}
-                        onClick={() => setMobileMenuOpen(false)}
-                        className="block"
-                      >
-                        <Button variant="outline" size="lg" fullWidth>
-                          {t('btnDashboard')}
-                        </Button>
-                      </Link>
-                    )}
                     {primaryAction && (
                       <Link
                         href={primaryAction.href}
