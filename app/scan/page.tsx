@@ -117,7 +117,7 @@ export default function ScanPage() {
     }, []);
 
     const liveDetectionLoop = useCallback(() => {
-        if (!cvReady || scanStage !== 'idle' || !videoRef.current || videoRef.current.readyState !== 4) {
+        if (!cvReady || scanStage !== 'idle' || !videoRef.current || videoRef.current.readyState < 2) {
             requestRef.current = window.setTimeout(() => requestAnimationFrame(liveDetectionLoop), 100);
             return;
         }
@@ -510,14 +510,26 @@ export default function ScanPage() {
                             {/* Live Detection Overlay */}
                             {livePoints && (
                                 <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none z-10 transition-all duration-75">
-                                    <polygon
-                                        points={livePoints.map((p: any) => `${p.x}%,${p.y}%`).join(' ')}
-                                        fill="rgba(59, 130, 246, 0.2)"
-                                        stroke="rgba(255, 255, 255, 0.9)"
-                                        strokeWidth="2.5"
-                                    />
+                                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%">
+                                        <polygon
+                                            points={livePoints.map((p: any) => `${p.x},${p.y}`).join(' ')}
+                                            fill="rgba(59, 130, 246, 0.2)"
+                                        />
+                                    </svg>
+                                    {livePoints.map((p: any, i: number) => {
+                                        const nextP = livePoints[(i + 1) % 4];
+                                        return (
+                                            <line
+                                                key={`l-${i}`}
+                                                x1={`${p.x}%`} y1={`${p.y}%`}
+                                                x2={`${nextP.x}%`} y2={`${nextP.y}%`}
+                                                stroke="rgba(255, 255, 255, 0.9)"
+                                                strokeWidth="2.5"
+                                            />
+                                        );
+                                    })}
                                     {livePoints.map((p: any, i: number) => (
-                                        <circle key={i} cx={`${p.x}%`} cy={`${p.y}%`} r="6" fill="white" />
+                                        <circle key={`c-${i}`} cx={`${p.x}%`} cy={`${p.y}%`} r="6" fill="white" />
                                     ))}
                                 </svg>
                             )}
