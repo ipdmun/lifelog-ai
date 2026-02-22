@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://lifelog-ai.vercel.app/sitemap.xml
