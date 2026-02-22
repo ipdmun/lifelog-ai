@@ -36,6 +36,7 @@ export default function ScanPage() {
     ]);
     const [activeElement, setActiveElement] = useState<number | string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const lastPointerPos = useRef<{ x: number, y: number } | null>(null);
     const [viewMode, setViewMode] = useState<'original' | 'digital'>('digital');
     const [result, setResult] = useState<ScanResult | null>(null);
     const [transformedImage, setTransformedImage] = useState<string | null>(null);
@@ -222,30 +223,35 @@ export default function ScanPage() {
     const pointerMoveHandler = (e: React.PointerEvent) => {
         if (activeElement === null || !containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
-        const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-        const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+        const currentX = ((e.clientX - rect.left) / rect.width) * 100;
+        const currentY = ((e.clientY - rect.top) / rect.height) * 100;
 
         const newPts = [...cropPoints];
 
         if (typeof activeElement === 'number') {
-            newPts[activeElement] = { x, y };
+            newPts[activeElement] = { x: Math.max(0, Math.min(100, currentX)), y: Math.max(0, Math.min(100, currentY)) };
         } else if (typeof activeElement === 'string' && activeElement.startsWith('e')) {
-            // Dragging an edge
             const eIndex = parseInt(activeElement.charAt(1));
-            // Calculate delta based on movement
-            const mx = Math.max(0, Math.min(100, ((e.movementX) / rect.width) * 100));
-            const my = Math.max(0, Math.min(100, ((e.movementY) / rect.height) * 100));
 
-            // Simpler and safer way: we just adjust the relevant axis of the two points of the edge.
-            if (eIndex === 0) { // Top edge -> adjust Y of 0 and 1
-                newPts[0].y = y; newPts[1].y = y;
-            } else if (eIndex === 1) { // Right edge -> adjust X of 1 and 2
-                newPts[1].x = x; newPts[2].x = x;
-            } else if (eIndex === 2) { // Bottom edge -> adjust Y of 2 and 3
-                newPts[2].y = y; newPts[3].y = y;
-            } else if (eIndex === 3) { // Left edge -> adjust X of 3 and 0
-                newPts[3].x = x; newPts[0].x = x;
+            if (lastPointerPos.current) {
+                const dx = currentX - lastPointerPos.current.x;
+                const dy = currentY - lastPointerPos.current.y;
+
+                const pt1 = eIndex;
+                const pt2 = (eIndex + 1) % 4;
+
+                newPts[pt1] = {
+                    x: Math.max(0, Math.min(100, newPts[pt1].x + dx)),
+                    y: Math.max(0, Math.min(100, newPts[pt1].y + dy))
+                };
+                newPts[pt2] = {
+                    x: Math.max(0, Math.min(100, newPts[pt2].x + dx)),
+                    y: Math.max(0, Math.min(100, newPts[pt2].y + dy))
+                };
             }
+
+            lastPointerPos.current = { x: currentX, y: currentY };
         }
 
         setCropPoints(newPts);
@@ -253,6 +259,7 @@ export default function ScanPage() {
 
     const pointerUpHandler = (e: React.PointerEvent) => {
         setActiveElement(null);
+        lastPointerPos.current = null;
         e.currentTarget.releasePointerCapture(e.pointerId);
     };
 
@@ -342,9 +349,8 @@ export default function ScanPage() {
                                     <polygon
                                         points={cropPoints.map(p => `${p.x}%,${p.y}%`).join(' ')}
                                         fill="transparent"
-                                        stroke="rgba(255, 255, 255, 0.8)"
+                                        stroke="rgba(255, 255, 255, 0.9)"
                                         strokeWidth="2"
-                                        strokeDasharray="4 4" // Makes it look lighter/dashed if preferred, remove if solid line is better
                                     />
                                     <polygon
                                         points={cropPoints.map(p => `${p.x}%,${p.y}%`).join(' ')}
@@ -364,7 +370,18 @@ export default function ScanPage() {
                                                     x1={`${p.x}%`} y1={`${p.y}%`} x2={`${nextP.x}%`} y2={`${nextP.y}%`}
                                                     stroke="transparent" strokeWidth="40"
                                                     className="cursor-move pointer-events-auto touch-none"
-                                                    onPointerDown={(e) => { e.preventDefault(); setActiveElement(`e${i}`); e.currentTarget.setPointerCapture(e.pointerId); }}
+                                                    onPointerDown={(e) => {
+                                                        e.preventDefault();
+                                                        setActiveElement(`e${i}`);
+                                                        if (containerRef.current) {
+                                                            const r = containerRef.current.getBoundingClientRect();
+                                                            lastPointerPos.current = {
+                                                                x: ((e.clientX - r.left) / r.width) * 100,
+                                                                y: ((e.clientY - r.top) / r.height) * 100
+                                                            };
+                                                        }
+                                                        e.currentTarget.setPointerCapture(e.pointerId);
+                                                    }}
                                                     onPointerUp={pointerUpHandler} onPointerCancel={pointerUpHandler}
                                                 />
                                                 {/* Visual Handle - The White Bar */}
@@ -473,11 +490,11 @@ export default function ScanPage() {
 
                 {/* External Control Bar moved outside containerRef to prevent overlap with the image scaling */}
                 {scanStage === 'cropping' && (
-                    <div className="fixed bottom-6 left-0 right-0 px-6 sm:max-w-2xl sm:mx-auto flex justify-between gap-4 pointer-events-auto z-50">
+                    <div className="w-full max-w-2xl mx-auto flex justify-between gap-4 mt-8 px-4 sm:px-0 pointer-events-auto z-50">
                         <Button onClick={handleDiscard} variant="ghost" className="flex-1 bg-black/70 text-white hover:bg-black/90 backdrop-blur-md border border-white/20 py-6 text-lg rounded-2xl shadow-xl font-semibold">
                             {t('btnDiscard')}
                         </Button>
-                        <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-[0_8px_32px_rgba(245,158,11,0.4)] text-lg rounded-2xl font-bold border border-white/10">
+                        <Button onClick={confirmCrop} variant="primary" className="flex-1 py-6 shadow-[0_8px_32px_rgba(245,158,11,0.4)] text-lg rounded-2xl font-bold border border-white/10 mt-0">
                             {t('btnConfirmCrop')}
                         </Button>
                     </div>
