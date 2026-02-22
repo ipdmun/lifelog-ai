@@ -59,7 +59,7 @@ export default function ScanPage() {
             cameraStreamRef.current.getTracks().forEach(track => track.stop());
             cameraStreamRef.current = null;
         }
-        if (requestRef.current) cancelAnimationFrame(requestRef.current);
+        if (requestRef.current) clearTimeout(requestRef.current);
     }, []);
 
     const detectDocument = useCallback((cv: any, srcCanvas: HTMLCanvasElement): { x: number, y: number }[] | null => {
@@ -81,7 +81,8 @@ export default function ScanPage() {
             for (let i = 0; i < contours.size(); ++i) {
                 const contour = contours.get(i);
                 const area = cv.contourArea(contour, false);
-                if (area > (srcCanvas.width * srcCanvas.height * 0.05) && area > maxArea) {
+                // Lower threshold to 2% to detect smaller documents
+                if (area > (srcCanvas.width * srcCanvas.height * 0.02) && area > maxArea) {
                     const peri = cv.arcLength(contour, true);
                     const tmpApprox = new cv.Mat();
                     cv.approxPolyDP(contour, tmpApprox, 0.02 * peri, true);
@@ -117,7 +118,7 @@ export default function ScanPage() {
 
     const liveDetectionLoop = useCallback(() => {
         if (!cvReady || scanStage !== 'idle' || !videoRef.current || videoRef.current.readyState !== 4) {
-            requestRef.current = requestAnimationFrame(liveDetectionLoop);
+            requestRef.current = window.setTimeout(() => requestAnimationFrame(liveDetectionLoop), 100);
             return;
         }
 
@@ -134,9 +135,12 @@ export default function ScanPage() {
 
             const pts = detectDocument(cv, canvas);
             if (pts) setLivePoints(pts);
-        } catch (e) { }
+        } catch (e) {
+            console.error("Live detection error", e);
+        }
 
-        requestRef.current = requestAnimationFrame(liveDetectionLoop);
+        // Run at ~10 FPS to save battery and avoid UI freeze
+        requestRef.current = window.setTimeout(() => requestAnimationFrame(liveDetectionLoop), 100);
     }, [cvReady, scanStage, detectDocument]);
 
     const startCamera = useCallback(async () => {
@@ -153,7 +157,7 @@ export default function ScanPage() {
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
                 videoRef.current.play();
-                requestRef.current = requestAnimationFrame(liveDetectionLoop);
+                requestRef.current = window.setTimeout(() => requestAnimationFrame(liveDetectionLoop), 100);
             }
         } catch (err) {
             console.error("Camera error:", err);
@@ -452,8 +456,16 @@ export default function ScanPage() {
         <div className="min-h-[100dvh] bg-[var(--color-neutral-900)] text-[var(--color-neutral-50)] flex flex-col">
             <Script
                 src="https://docs.opencv.org/4.8.0/opencv.js"
-                strategy="lazyOnload"
-                onLoad={() => setCvReady(true)}
+                strategy="afterInteractive"
+                onLoad={() => {
+                    // OpenCV.js uses WASM, which initializes asynchronously after script load.
+                    const checkCv = setInterval(() => {
+                        if ((window as any).cv && typeof (window as any).cv.Mat === 'function') {
+                            clearInterval(checkCv);
+                            setCvReady(true);
+                        }
+                    }, 100);
+                }}
             />
 
             {/* Overlay Header */}
